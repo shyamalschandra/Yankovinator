@@ -37,12 +37,12 @@ Yankovinator is a Swift-based application that converts songs into parodies usin
 
 ### Pre-built Binaries (Recommended)
 
-Download pre-built universal binaries from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator-swift/releases). No Swift toolchain required!
+Download pre-built universal binaries from [GitHub Releases](https://github.com/shyamalschandra/yankovinator/releases). No Swift toolchain required!
 
 ```bash
 # Download the universal binary (works on both Intel and Apple Silicon)
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator-swift/releases/download/v1.0.0/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/yankovinator/releases/download/v1.01/yankovinator-universal.tar.gz
 
 # Extract
 tar -xzf yankovinator-universal.tar.gz
@@ -63,10 +63,10 @@ Install via Homebrew using the tap:
 
 ```bash
 # Add the tap
-brew tap shyamalschandra/yankovinator-swift
+brew tap shyamalschandra/yankovinator
 
-# Install Yankovinator-swift
-brew install yankovinator-swift
+# Install Yankovinator
+brew install yankovinator
 
 # Verify installation
 yankovinator --help
@@ -82,8 +82,8 @@ For development or if you prefer building from source:
 #### 1. Clone the repository
 
 ```bash
-git clone https://github.com/shyamalschandra/Yankovinator-swift.git
-cd Yankovinator-swift
+git clone https://github.com/shyamalschandra/yankovinator.git
+cd yankovinator
 ```
 
 #### 2. Build the project

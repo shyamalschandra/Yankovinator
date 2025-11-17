@@ -245,6 +245,13 @@ jobs:
             - **Intel (x86_64)**: `yankovinator-x86_64.tar.gz` - For Intel-based Macs
             - **Apple Silicon (arm64)**: `yankovinator-arm64.tar.gz` - For Apple Silicon Macs
             
+            ### Installation via Homebrew
+            
+            ```bash
+            brew tap shyamalschandra/yankovinator
+            brew install yankovinator
+            ```
+            
             ### Installation
             
             ```bash

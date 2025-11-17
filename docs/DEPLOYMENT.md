@@ -2,7 +2,7 @@
 
 ## ✅ Site is Live and Deployed
 
-**URL:** https://shyamalschandra.github.io/Yankovinator-swift/
+**URL:** https://shyamalschandra.github.io/yankovinator/
 
 ## Deployment Configuration
 
@@ -33,9 +33,9 @@ The site automatically deploys when you push changes to:
 
 You can verify the site is working by:
 
-1. **Visit the URL:** https://shyamalschandra.github.io/Yankovinator-swift/
-2. **Check GitHub Pages settings:** https://github.com/shyamalschandra/Yankovinator-swift/settings/pages
-3. **View deployment logs:** https://github.com/shyamalschandra/Yankovinator-swift/actions
+1. **Visit the URL:** https://shyamalschandra.github.io/yankovinator/
+2. **Check GitHub Pages settings:** https://github.com/shyamalschandra/yankovinator/settings/pages
+3. **View deployment logs:** https://github.com/shyamalschandra/yankovinator/actions
 
 ## Troubleshooting
 
@@ -54,4 +54,4 @@ To manually trigger a deployment:
 gh workflow run "Deploy GitHub Pages"
 ```
 
-Or visit: https://github.com/shyamalschandra/Yankovinator-swift/actions/workflows/pages.yml
+Or visit: https://github.com/shyamalschandra/yankovinator/actions/workflows/pages.yml

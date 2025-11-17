@@ -1,12 +1,12 @@
 # Binary Releases
 
-Yankovinator-swift provides pre-built universal binaries for macOS, eliminating the need to build from source.
+Yankovinator provides pre-built universal binaries for macOS, eliminating the need to build from source.
 
 ## Downloading Binaries
 
 ### From GitHub Releases
 
-1. Visit the [Releases page](https://github.com/shyamalschandra/Yankovinator-swift/releases)
+1. Visit the [Releases page](https://github.com/shyamalschandra/yankovinator/releases)
 2. Download the appropriate binary for your system:
    - **Universal Binary** (recommended): Works on both Intel and Apple Silicon Macs
    - **Intel (x86_64)**: For Intel-based Macs
@@ -17,7 +17,7 @@ Yankovinator-swift provides pre-built universal binaries for macOS, eliminating 
 ```bash
 # Download the universal binary
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator-swift/releases/download/v1.0.0/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/yankovinator/releases/download/v1.01/yankovinator-universal.tar.gz
 
 # Extract
 tar -xzf yankovinator-universal.tar.gz
@@ -49,21 +49,21 @@ lipo -info $(which yankovinator)  # Should show both architectures
 
 1. Create a Homebrew tap repository (if not already created):
    ```bash
-   # Create repository: homebrew-yankovinator-swift
-   # Place the Formula/yankovinator-swift.rb file there
+   # Create repository: homebrew-yankovinator
+   # Place the Formula/yankovinator.rb file there
    ```
 
 2. Install via Homebrew:
    ```bash
-   brew tap shyamalschandra/yankovinator-swift
-   brew install yankovinator-swift
+   brew tap shyamalschandra/yankovinator
+   brew install yankovinator
    ```
 
 ### Updating the Homebrew Formula
 
 After creating a new release:
 
-1. Update the version in `Formula/yankovinator-swift.rb`
+1. Update the version in `Formula/yankovinator.rb`
 2. Calculate the SHA256 checksum:
    ```bash
    shasum -a 256 yankovinator-universal.tar.gz
