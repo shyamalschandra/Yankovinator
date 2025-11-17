@@ -374,12 +374,26 @@ Yankovinator requires Ollama to be installed and running on your macOS system. F
 
 ### Method 2: Install Ollama via Homebrew
 
-1. **Install Ollama:**
+1. **Install Ollama (choose one method):**
+   
+   **Option A: Install Ollama GUI App (Recommended for macOS):**
+   ```bash
+   brew install --cask ollama-app
+   ```
+   This installs the GUI application that runs automatically.
+   
+   **Option B: Install Ollama CLI:**
    ```bash
    brew install ollama
    ```
 
 2. **Start Ollama service:**
+   
+   **If using GUI app (Option A):**
+   - Launch Ollama from Applications
+   - The app runs automatically in the background
+   
+   **If using CLI (Option B):**
    ```bash
    ollama serve
    ```
