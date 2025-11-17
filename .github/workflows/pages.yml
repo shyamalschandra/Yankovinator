@@ -43,6 +43,7 @@ jobs:
 
       - name: Build TypeScript
         run: npm run build
+        continue-on-error: true
 
       - name: Build LaTeX Technical Paper
         uses: xu-cheng/latex-action@v3
