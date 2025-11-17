@@ -5,7 +5,7 @@
 
 class Yankovinator < Formula
   desc "Convert songs into parodies with theme-based constraints using llama on Ollama"
-  homepage "https://github.com/shyamalschandra/yankovinator"
+  homepage "https://github.com/shyamalschandra/Yankovinator"
   version "1.01"
   # Requires macOS 13.0+ for Ollama support
   depends_on :macos => :ventura
@@ -19,9 +19,9 @@ class Yankovinator < Formula
   
   # Use universal binary if available, otherwise fall back to architecture-specific
   # Update these URLs after creating a GitHub release
-  url "https://github.com/shyamalschandra/yankovinator/releases/download/v#{version}/yankovinator-universal.tar.gz"
+  url "https://github.com/shyamalschandra/Yankovinator/releases/download/v#{version}/yankovinator-universal.tar.gz"
   # Alternative: use architecture-specific binary
-  # url "https://github.com/shyamalschandra/yankovinator/releases/download/v#{version}/yankovinator-#{arch}.tar.gz"
+  # url "https://github.com/shyamalschandra/Yankovinator/releases/download/v#{version}/yankovinator-#{arch}.tar.gz"
   
   # Calculate SHA256 after creating the release
   # Run: shasum -a 256 yankovinator-universal.tar.gz

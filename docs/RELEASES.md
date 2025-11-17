@@ -6,7 +6,7 @@ Yankovinator provides pre-built universal binaries for macOS, eliminating the ne
 
 ### From GitHub Releases
 
-1. Visit the [Releases page](https://github.com/shyamalschandra/yankovinator/releases)
+1. Visit the [Releases page](https://github.com/shyamalschandra/Yankovinator/releases)
 2. Download the appropriate binary for your system:
    - **Universal Binary** (recommended): Works on both Intel and Apple Silicon Macs
    - **Intel (x86_64)**: For Intel-based Macs
@@ -17,7 +17,7 @@ Yankovinator provides pre-built universal binaries for macOS, eliminating the ne
 ```bash
 # Download the universal binary
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/yankovinator/releases/download/v1.01/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.01/yankovinator-universal.tar.gz
 
 # Extract
 tar -xzf yankovinator-universal.tar.gz
