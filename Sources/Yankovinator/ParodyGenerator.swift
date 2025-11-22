@@ -8,14 +8,29 @@ import NaturalLanguage
 public class ParodyGenerator {
     private let ollamaClient: OllamaClient
     private let syllableCounter: SyllableCounter.Type
+    private let dictionary: OEDDictionary?
     
     /// Initialize the parody generator
     /// - Parameters:
     ///   - ollamaBaseURL: Base URL for Ollama API
     ///   - ollamaModel: Model name to use (default: llama3.2:3b)
-    public init(ollamaBaseURL: String = "http://localhost:11434", ollamaModel: String = "llama3.2:3b") {
+    ///   - dictionaryPath: Optional path to dictionary file
+    ///   - useDictionary: Whether to use OED dictionary for better word choices (default: true)
+    public init(
+        ollamaBaseURL: String = "http://localhost:11434",
+        ollamaModel: String = "llama3.2:3b",
+        dictionaryPath: String? = nil,
+        useDictionary: Bool = true
+    ) {
         self.ollamaClient = OllamaClient(baseURL: ollamaBaseURL, model: ollamaModel)
         self.syllableCounter = SyllableCounter.self
+        
+        // Initialize dictionary if requested
+        if useDictionary {
+            self.dictionary = OEDDictionary(dictionaryPath: dictionaryPath)
+        } else {
+            self.dictionary = nil
+        }
     }
     
     /// Generate a parody of a song
@@ -61,6 +76,7 @@ public class ParodyGenerator {
         var nonEmptyParodyLines: [String] = [] // Track non-empty lines separately for rhyming
         let totalLines = originalLyrics.count
         var nonEmptyIndex = 0
+        var usedWords: Set<String> = [] // Track words used across lines to avoid repetition
         
         // Generate each line, preserving empty lines
         for (index, originalLine) in originalLyrics.enumerated() {
@@ -93,6 +109,13 @@ public class ParodyGenerator {
             let wordSyllables = syllableCounter.analyzeWordSyllables(in: originalLine)
             let wordSyllablePattern = wordSyllables.map { "\($0.word)(\($0.syllables))" }.joined(separator: " ")
             
+            // Get word suggestions from dictionary for better word choices
+            let wordSuggestions = getWordSuggestions(
+                for: wordSyllables.map { $0.syllables },
+                theme: Array(keywords.keys),
+                excludeWords: usedWords
+            )
+            
             // Generate parody line matching syllable count and rhyming requirements
             // Use more context lines (up to 8) for better semantic coherence
             let contextLines = Array(parodyLines.suffix(8).filter { !$0.isEmpty })
@@ -107,7 +130,9 @@ public class ParodyGenerator {
                     rhymingLines: rhymingLines,
                     rhymeScheme: rhymeScheme,
                     wordSyllablePattern: wordSyllablePattern,
-                    wordSyllables: wordSyllables.map { $0.syllables }
+                    wordSyllables: wordSyllables.map { $0.syllables },
+                    usedWords: usedWords,
+                    wordSuggestions: wordSuggestions
                 )
             } catch let error as OllamaError {
                 // If generation fails, provide helpful error
@@ -144,7 +169,8 @@ public class ParodyGenerator {
                             rhymeGroup: currentRhymeGroup,
                             rhymingLines: rhymingLines,
                             rhymeScheme: rhymeScheme,
-                            previousLines: contextLines
+                            previousLines: contextLines,
+                            usedWords: usedWords
                         )
                         hasDoneWordSyllableRefinement = true
                     } else if shouldRunSemanticCoherence && !hasDoneSemanticRefinement {
@@ -158,7 +184,8 @@ public class ParodyGenerator {
                             rhymeGroup: currentRhymeGroup,
                             rhymingLines: rhymingLines,
                             rhymeScheme: rhymeScheme,
-                            wordSyllables: wordSyllables.map { $0.syllables }
+                            wordSyllables: wordSyllables.map { $0.syllables },
+                            usedWords: usedWords
                         )
                         hasDoneSemanticRefinement = true
                     } else {
@@ -193,7 +220,8 @@ public class ParodyGenerator {
                         rhymeGroup: currentRhymeGroup,
                         rhymingLines: rhymingLines,
                         rhymeScheme: rhymeScheme,
-                        wordSyllables: wordSyllables.map { $0.syllables }
+                        wordSyllables: wordSyllables.map { $0.syllables },
+                        usedWords: usedWords
                     )
                 } catch {
                     if verbose {
@@ -201,6 +229,10 @@ public class ParodyGenerator {
                     }
                 }
             }
+            
+            // Extract words from the generated line and add to usedWords set
+            let wordsInLine = extractWords(from: parodyLine)
+            usedWords.formUnion(wordsInLine)
             
             // Apply capitalization and punctuation matching from original line
             parodyLine = applyCapitalizationAndPunctuation(
@@ -215,6 +247,51 @@ public class ParodyGenerator {
         return parodyLines
     }
     
+    /// Extract words from a line (for tracking usage)
+    private func extractWords(from line: String) -> Set<String> {
+        let tokenizer = NLTokenizer(unit: .word)
+        tokenizer.string = line
+        var words: Set<String> = []
+        tokenizer.enumerateTokens(in: line.startIndex..<line.endIndex) { tokenRange, _ in
+            let word = String(line[tokenRange]).lowercased().filter { $0.isLetter }
+            if !word.isEmpty {
+                words.insert(word)
+            }
+            return true
+        }
+        return words
+    }
+    
+    /// Get word suggestions from dictionary for each syllable position
+    /// - Parameters:
+    ///   - syllableCounts: Array of syllable counts per word position
+    ///   - theme: Theme keywords for semantic matching
+    ///   - excludeWords: Words to exclude
+    /// - Returns: Array of word suggestions per position
+    private func getWordSuggestions(
+        for syllableCounts: [Int],
+        theme: [String],
+        excludeWords: Set<String>
+    ) -> [[(word: String, definition: String)]] {
+        guard let dict = dictionary, dict.isLoaded() else {
+            return []
+        }
+        
+        var suggestions: [[(word: String, definition: String)]] = []
+        
+        for syllableCount in syllableCounts {
+            let wordSuggestions = dict.getWordSuggestions(
+                syllableCount: syllableCount,
+                theme: theme,
+                excludeWords: excludeWords,
+                maxResults: 10
+            )
+            suggestions.append(wordSuggestions)
+        }
+        
+        return suggestions
+    }
+    
     /// Refine word-by-word syllable matching
     private func refineWordSyllableMatching(
         line: String,
@@ -225,7 +302,8 @@ public class ParodyGenerator {
         rhymeGroup: String,
         rhymingLines: [String],
         rhymeScheme: String,
-        previousLines: [String] = []
+        previousLines: [String] = [],
+        usedWords: Set<String> = []
     ) async throws -> String {
         // Analyze the generated line's word syllables
         let generatedWordSyllables = syllableCounter.analyzeWordSyllables(in: line)
@@ -271,6 +349,19 @@ public class ParodyGenerator {
             """
         }
         
+        var wordAvoidance = ""
+        if !usedWords.isEmpty {
+            let usedWordsList = Array(usedWords).sorted().prefix(50).joined(separator: ", ")
+            wordAvoidance = """
+            
+            WORD USAGE ENTROPY REQUIREMENT:
+            - DO NOT use any of these words that have already been used in previous lines: \(usedWordsList)
+            - Increase word entropy by using different, fresh vocabulary
+            - Only reuse words if they appear in the same line (repetition within a line is acceptable)
+            - Use synonyms, alternative phrasing, and varied word choices to avoid repetition
+            """
+        }
+        
         let prompt = """
         Refine this parody line to match the EXACT word-by-word syllable pattern of the original while maintaining semantic coherence.
         
@@ -284,11 +375,12 @@ public class ParodyGenerator {
         2. Total syllables: \(syllableCount)
         3. Theme: \(keywordDescriptions) - STRONGLY EMBRACE and ADVANCE this theme in the line's meaning
         4. Rhyme group: \(rhymeGroup) in \(rhymeScheme) scheme\(rhymingInfo)
-        5. The line must make COGENT SENSE and have ARTISTIC STYLE that AMAZES
-        6. Use vivid imagery, clever wordplay, and evocative language
-        7. The line should flow naturally like professional song lyrics
-        8. Use proper contractions with apostrophes (e.g., "don't", "can't", "it's", "won't") when appropriate for natural speech
-        9. SEMANTICALLY ADVANCE THE THEME: Make the theme keywords integral to the line's meaning\(semanticContext)
+        5. IN-LINE RHYMES: Include internal rhymes within the line, separated by commas. For example: "bright, light, night" or "dream, stream, seem". These comma-separated words should rhyme with each other and appear naturally in the line.
+        6. The line must make COGENT SENSE and have ARTISTIC STYLE that AMAZES
+        7. Use vivid imagery, clever wordplay, and evocative language
+        8. The line should flow naturally like professional song lyrics
+        9. Use proper contractions with apostrophes (e.g., "don't", "can't", "it's", "won't") when appropriate for natural speech
+        10. SEMANTICALLY ADVANCE THE THEME: Make the theme keywords integral to the line's meaning\(semanticContext)\(wordAvoidance)
         
         Generate a refined line that matches the syllable pattern EXACTLY while maintaining semantic coherence, meaning, style, and quality.
         Return ONLY the refined line, nothing else:
@@ -304,7 +396,9 @@ public class ParodyGenerator {
             rhymingLines: rhymingLines,
             rhymeScheme: rhymeScheme,
             wordSyllablePattern: nil,
-            wordSyllables: wordSyllables
+            wordSyllables: wordSyllables,
+            usedWords: usedWords,
+            wordSuggestions: []
         )
         
         // Validate the refined line has correct syllable count
@@ -327,7 +421,8 @@ public class ParodyGenerator {
         rhymeGroup: String,
         rhymingLines: [String],
         rhymeScheme: String,
-        wordSyllables: [Int]
+        wordSyllables: [Int],
+        usedWords: Set<String> = []
     ) async throws -> String {
         // If no previous lines, skip semantic refinement
         guard !previousLines.isEmpty else {
@@ -343,6 +438,19 @@ public class ParodyGenerator {
         var rhymingInfo = ""
         if !rhymingLines.isEmpty {
             rhymingInfo = "\nLines that must rhyme with this: \(rhymingLines.joined(separator: ", "))"
+        }
+        
+        var wordAvoidance = ""
+        if !usedWords.isEmpty {
+            let usedWordsList = Array(usedWords).sorted().prefix(50).joined(separator: ", ")
+            wordAvoidance = """
+            
+            WORD USAGE ENTROPY REQUIREMENT:
+            - DO NOT use any of these words that have already been used in previous lines: \(usedWordsList)
+            - Increase word entropy by using different, fresh vocabulary
+            - Only reuse words if they appear in the same line (repetition within a line is acceptable)
+            - Use synonyms, alternative phrasing, and varied word choices to avoid repetition
+            """
         }
         
         let prompt = """
@@ -372,6 +480,7 @@ public class ParodyGenerator {
         8. Maintain artistic style with vivid imagery and clever wordplay
         9. Preserve rhyme requirements
         10. Use proper contractions when appropriate
+        11. IN-LINE RHYMES: Include internal rhymes within the line, separated by commas. For example: "bright, light, night" or "dream, stream, seem". These comma-separated words should rhyme with each other and appear naturally in the line.\(wordAvoidance)
         
         Generate a refined line that:
         - Maintains the exact syllable pattern
@@ -392,7 +501,9 @@ public class ParodyGenerator {
             rhymingLines: rhymingLines,
             rhymeScheme: rhymeScheme,
             wordSyllablePattern: nil,
-            wordSyllables: wordSyllables
+            wordSyllables: wordSyllables,
+            usedWords: usedWords,
+            wordSuggestions: []
         )
         
         // Validate the refined line has correct syllable count
@@ -484,7 +595,8 @@ public class ParodyGenerator {
             syllableCount: syllableCount,
             keywords: keywords,
             previousLines: [],
-            customPrompt: prompt
+            customPrompt: prompt,
+            wordSuggestions: []
         )
         
         // Validate the refined line has similar syllable count

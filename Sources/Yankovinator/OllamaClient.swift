@@ -8,6 +8,11 @@ import NIOPosix
 
 /// Client for interacting with Ollama API
 public class OllamaClient {
+    // Shared HTTP client for all OllamaClient instances
+    // This ensures proper lifecycle management and avoids connection issues
+    private static var sharedHTTPClient: HTTPClient?
+    private static let clientLock = NSLock()
+    
     private let baseURL: String
     private let model: String
     private let httpClient: HTTPClient
@@ -20,18 +25,32 @@ public class OllamaClient {
         self.baseURL = baseURL
         self.model = model
         
-        // Configure HTTP client with proper settings
-        var configuration = HTTPClient.Configuration()
-        configuration.timeout = HTTPClient.Configuration.Timeout(
-            connect: .seconds(10),
-            read: .seconds(60)
-        )
-        // Create HTTP client - use createNew (deprecation warning is acceptable)
-        self.httpClient = HTTPClient(eventLoopGroupProvider: .createNew, configuration: configuration)
+        // Use a shared HTTP client instance to avoid lifecycle issues
+        // This ensures the event loop is properly initialized and connections are reused
+        Self.clientLock.lock()
+        defer { Self.clientLock.unlock() }
+        
+        if Self.sharedHTTPClient == nil {
+            // Configure HTTP client with proper settings
+            var configuration = HTTPClient.Configuration()
+            configuration.timeout = HTTPClient.Configuration.Timeout(
+                connect: .seconds(30),
+                read: .seconds(120)
+            )
+            // Enable connection pooling and keep-alive
+            configuration.connectionPool.idleTimeout = .seconds(60)
+            // Use singleton event loop group (recommended approach)
+            // This uses a system-managed shared event loop that's properly initialized
+            Self.sharedHTTPClient = HTTPClient(eventLoopGroupProvider: .singleton, configuration: configuration)
+        }
+        
+        // Use the shared HTTP client instance
+        self.httpClient = Self.sharedHTTPClient!
     }
     
     deinit {
-        try? httpClient.syncShutdown()
+        // Don't shutdown the shared HTTP client - it will be cleaned up on process exit
+        // Shutting it down here would break other instances
     }
     
     /// Generate parody line matching syllable count and theme
@@ -46,6 +65,8 @@ public class OllamaClient {
     ///   - rhymeScheme: The overall rhyme scheme pattern (e.g., "ABAB", "AABB")
     ///   - wordSyllablePattern: Pattern showing word-by-word syllable counts (e.g., "hello(2) world(1)")
     ///   - wordSyllables: Array of syllable counts per word position
+    ///   - usedWords: Set of words already used in previous lines (to avoid repetition)
+    ///   - wordSuggestions: Array of word suggestions per position from OED dictionary
     /// - Returns: Generated parody line
     public func generateParodyLine(
         originalLine: String,
@@ -57,7 +78,9 @@ public class OllamaClient {
         rhymingLines: [String] = [],
         rhymeScheme: String? = nil,
         wordSyllablePattern: String? = nil,
-        wordSyllables: [Int]? = nil
+        wordSyllables: [Int]? = nil,
+        usedWords: Set<String> = [],
+        wordSuggestions: [[(word: String, definition: String)]] = []
     ) async throws -> String {
         let keywordDescriptions = keywords.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
         let context = previousLines.isEmpty ? "" : "Previous lines:\n\(previousLines.joined(separator: "\n"))\n\n"
@@ -88,6 +111,65 @@ public class OllamaClient {
             } else {
                 rhymingInstructions += "\n   This is the first line in rhyme group '\(rhymeGroup)'. Future lines in this group will need to rhyme with your line."
             }
+        }
+        
+        // Build in-line rhyme instructions
+        let inlineRhymeInstructions = """
+        
+        7. IN-LINE RHYMES (CRITICAL): Include internal rhymes within the line, separated by commas.
+           - Add comma-separated rhyming words that appear naturally in the line
+           - Examples: "bright, light, night" or "dream, stream, seem" or "flow, glow, show"
+           - These rhyming words should be integrated naturally into the line's meaning
+           - The comma-separated words should rhyme with each other
+           - This creates rich internal rhyme patterns within each verse
+        """
+        
+        // Build word avoidance instructions
+        var wordAvoidanceInstructions = ""
+        if !usedWords.isEmpty {
+            let usedWordsList = Array(usedWords).sorted().prefix(50).joined(separator: ", ")
+            wordAvoidanceInstructions = """
+            
+            8. WORD USAGE ENTROPY (CRITICAL): Increase vocabulary diversity by avoiding word repetition.
+               - DO NOT use any of these words that have already been used in previous lines: \(usedWordsList)
+               - Use synonyms, alternative phrasing, and varied word choices
+               - Only reuse words if they appear in the same line (repetition within a line is acceptable)
+               - This increases the entropy and richness of word usage across the poetry
+            """
+        } else {
+            wordAvoidanceInstructions = """
+            
+            8. WORD USAGE ENTROPY: Use diverse vocabulary and avoid unnecessary repetition across different lines.
+            """
+        }
+        
+        // Build OED dictionary word suggestions
+        var dictionarySuggestions = ""
+        if !wordSuggestions.isEmpty && !wordSuggestions.allSatisfy({ $0.isEmpty }) {
+            dictionarySuggestions = """
+            
+            9. OED DICTIONARY WORD SUGGESTIONS (from 1913 Oxford/Webster's Dictionary):
+               Use these curated words from the Oxford English Dictionary for superior word choice.
+               These words are verified, have the correct syllable counts, and relate to your theme:
+            """
+            
+            for (index, suggestions) in wordSuggestions.enumerated() {
+                if !suggestions.isEmpty {
+                    let syllableCount = wordSyllables?[index] ?? 0
+                    dictionarySuggestions += "\n   Position \(index + 1) (\(syllableCount) syllables):"
+                    for suggestion in suggestions.prefix(5) {
+                        dictionarySuggestions += "\n     - \(suggestion.word): \(suggestion.definition)"
+                    }
+                }
+            }
+            
+            dictionarySuggestions += """
+            
+               - PREFER these dictionary words when they fit naturally
+               - These words are from the authoritative 1913 Oxford/Webster's Dictionary
+               - They provide richer, more precise vocabulary than common alternatives
+               - Use them to elevate the artistic quality and precision of your poetry
+            """
         }
         
         // Use custom prompt if provided, otherwise use default
@@ -124,7 +206,7 @@ public class OllamaClient {
                - Make the theme central to the line's semantic content, not just mentioned
             3. Maintains the rhythm and style of the original: "\(originalLine)"
             4. Preserves punctuation style similar to the original
-            5. Is creative, humorous, and appropriate\(rhymingInstructions)
+            5. Is creative, humorous, and appropriate\(rhymingInstructions)\(inlineRhymeInstructions)\(wordAvoidanceInstructions)\(dictionarySuggestions)
             
             CRITICAL QUALITY REQUIREMENTS:
             - The line must make COGENT SENSE - it must be grammatically correct and semantically meaningful
@@ -172,6 +254,7 @@ public class OllamaClient {
         request.method = .POST
         request.headers.add(name: "Content-Type", value: "application/json")
         request.headers.add(name: "Accept", value: "application/json")
+        request.headers.add(name: "Connection", value: "keep-alive")
         request.body = .bytes(ByteBuffer(data: jsonData))
         
         // Execute request with detailed logging
@@ -296,6 +379,7 @@ public class OllamaClient {
         
         var request = HTTPClientRequest(url: checkURL)
         request.method = .GET
+        request.headers.add(name: "Connection", value: "keep-alive")
         
         do {
             let response = try await httpClient.execute(request, timeout: .seconds(5))
@@ -396,18 +480,31 @@ public class OllamaClient {
         request.method = .POST
         request.headers.add(name: "Content-Type", value: "application/json")
         request.headers.add(name: "Accept", value: "application/json")
+        request.headers.add(name: "Connection", value: "keep-alive")
         request.body = .bytes(ByteBuffer(data: jsonData))
         
+        // Execute request - ensure we're not blocking the event loop
         let response: HTTPClientResponse
         do {
-            response = try await httpClient.execute(request, timeout: .seconds(60))
+            response = try await httpClient.execute(request, timeout: .seconds(120))
+        } catch let error as HTTPClientError {
+            // Provide more specific error handling for HTTPClientError
+            // HTTPClientError error 1 typically means invalid state or connection issue
+            throw OllamaError.networkError(error)
         } catch {
+            // Include URL context in error for better debugging
             throw OllamaError.networkError(error)
         }
         
+        // Collect response body with proper error handling
         var responseData = Data()
-        for try await buffer in response.body {
-            responseData.append(contentsOf: buffer.readableBytesView)
+        do {
+            for try await buffer in response.body {
+                responseData.append(contentsOf: buffer.readableBytesView)
+            }
+        } catch {
+            // If body reading fails, it might be a connection issue
+            throw OllamaError.networkError(error)
         }
         
         guard response.status == .ok else {
@@ -487,7 +584,30 @@ public enum OllamaError: Error, CustomStringConvertible {
         case .invalidResponse:
             return "Invalid response from Ollama API"
         case .networkError(let error):
-            return "Network error: \(error.localizedDescription)"
+            // Provide more detailed error information for AsyncHTTPClient errors
+            let errorString = String(describing: error)
+            let errorType = String(describing: type(of: error))
+            let localizedDesc = error.localizedDescription
+            
+            // Build a comprehensive error message
+            var errorDescription = "\(errorType)"
+            if !localizedDesc.isEmpty && localizedDesc != errorString {
+                errorDescription += ": \(localizedDesc)"
+            } else if !errorString.isEmpty {
+                errorDescription += ": \(errorString)"
+            }
+            
+            // Add helpful suggestions based on error patterns
+            var suggestions = ""
+            if errorString.lowercased().contains("timeout") || errorString.lowercased().contains("deadline") {
+                suggestions = " This may indicate Ollama is taking too long to respond. Try increasing the timeout or checking if Ollama is processing a large request."
+            } else if errorString.lowercased().contains("connection") && (errorString.lowercased().contains("close") || errorString.lowercased().contains("refused")) {
+                suggestions = " This may indicate Ollama stopped responding or is not accessible. Ensure Ollama is running: 'ollama serve'"
+            } else if errorString.contains("error 1") || errorString.contains("HTTPClientError") {
+                suggestions = " This is typically a connection error. Ensure Ollama is running and accessible at the configured URL."
+            }
+            
+            return "Network error: \(errorDescription).\(suggestions) Please verify Ollama is running: 'ollama serve'"
         case .modelNotFound(let model):
             return "Model '\(model)' not found. Please ensure the model is installed: ollama pull \(model)"
         }
