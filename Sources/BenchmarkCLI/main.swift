@@ -14,7 +14,7 @@ struct BenchmarkCLI: AsyncParsableCommand {
         Benchmark tool to measure Yankovinator's performance using Ollama.
         
         Example usage:
-          swift run benchmark --lyrics data/test_short.txt --keywords data/test_keywords.txt
+          swift run benchmark --lyrics data/example_lyrics.txt --keywords data/example_keywords.txt
         """
     )
     

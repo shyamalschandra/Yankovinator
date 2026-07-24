@@ -1,106 +1,45 @@
-# Deployment Checklist for v2.0.0
+> **Current status (2026):** Yankovinator ships with **Ollama** (`llama3.2:3b`), not Apple Foundation Models. Use [README.md](README.md) and [QUICK_START.md](QUICK_START.md) for accurate instructions.
 
-## Pre-Release Checklist
+# Deployment Checklist (v1.01 / Ollama)
 
-### ✅ Code Complete
-- [x] All code migrated to Foundation Models
-- [x] All tests passing (15 tests, 0 failures)
-- [x] All executables building successfully
-- [x] All documentation updated
+## Pre-release
 
-### ✅ Build Verification
-- [x] Debug build: SUCCESS
-- [x] Release build: SUCCESS
-- [x] All executables verified working
+- [x] Source builds: `swift build` / `swift build -c release`
+- [x] XCTest suite green with Xcode developer dir (`swift test`)
+- [x] CLI help works: `yankovinator`, `keyword-generator`, `benchmark`
+- [x] Ollama integration verified with `llama3.2:3b`
+- [x] Sample data present: `data/example_lyrics.txt`, `data/example_keywords.txt`
+- [x] Docs aligned with Ollama (README, QUICK_START, `docs/`)
+- [x] GitHub Pages workflow present (`.github/workflows/pages.yml`)
+- [x] Homebrew formula template present (`Formula/yankovinator.rb`)
 
-### ✅ Git Status
-- [x] All changes committed
-- [x] Changes pushed to repository
+## Release steps
 
-## Release Steps
-
-### 1. Create Release Tag
 ```bash
-git tag -a v2.0.0 -m "Release v2.0.0 - Foundation Models Migration
+# Tag and push (example)
+git tag -a v1.01 -m "Release v1.01"
+git push origin v1.01
 
-Major Changes:
-- Migrated from Ollama to Apple Foundation Models
-- Removed external dependencies
-- Added benchmarking system
-- Updated platform requirements to macOS 15.0+ / iOS 18.0+
-
-See RELEASE_NOTES_v2.0.0.md for details."
-
-git push origin v2.0.0
+# Or dispatch Build and Release workflow with version tag
 ```
 
-### 2. GitHub Actions Release
-The release workflow will automatically:
-- Build universal binaries for x86_64 and arm64
-- Create universal binaries using lipo
-- Upload to GitHub Releases
-- Generate SHA256 checksums
+After assets publish:
 
-### 3. Update Homebrew Formula
-After the release is created:
+1. Verify release archives + `.sha256` files
+2. Update Homebrew tap formula version + SHA256
+3. Confirm Pages site: https://shyamalschandra.github.io/Yankovinator/
 
-1. Download the universal binary from GitHub Releases
-2. Calculate SHA256:
-   ```bash
-   shasum -a 256 yankovinator-universal.tar.gz
-   ```
-3. Update `Formula/yankovinator-swift.rb`:
-   - Update version to `2.0.0`
-   - Update SHA256 checksum
-   - Commit to Homebrew tap repository
+## Post-release smoke
 
-### 4. Verify Release
-- [ ] Check GitHub Releases page
-- [ ] Verify all binaries uploaded
-- [ ] Verify checksums present
-- [ ] Test binary download and extraction
-- [ ] Test Homebrew installation (if tap updated)
-
-## Post-Release
-
-### Testing
-- [ ] Test on macOS 15.0+ system
-- [ ] Verify Foundation Models works correctly
-- [ ] Run benchmarks
-- [ ] Test all CLI tools
-- [ ] Verify error handling
-
-### Documentation
-- [ ] Verify README is accurate
-- [ ] Check all documentation links work
-- [ ] Update any external references
-
-### Communication
-- [ ] Announce release
-- [ ] Update any external documentation
-- [ ] Notify users of breaking changes
-
-## Rollback Plan
-
-If issues are found:
-1. Tag previous version as latest
-2. Revert Homebrew formula if needed
-3. Document issues in GitHub Issues
-4. Plan hotfix release
-
-## Success Criteria
-
-- [x] Code compiles successfully
-- [x] All tests pass
-- [x] All executables work
-- [x] Documentation complete
-- [ ] Release created and binaries uploaded
-- [ ] Homebrew formula updated
-- [ ] Runtime testing on macOS 15.0+
+```bash
+yankovinator --help
+keyword-generator --help
+curl http://localhost:11434/api/tags
+yankovinator data/example_lyrics.txt --keywords data/example_keywords.txt
+```
 
 ## Notes
 
-- Foundation Models requires macOS 15.0+ (Sequoia) or iOS 18.0+
-- The framework's availability annotation says macOS 26.0+, but this appears to be a future-version marker
-- Code should work on macOS 15.0+ at runtime
-- All Foundation Models tests gracefully skip when framework unavailable
+- Runtime requires local Ollama + model pull
+- `swift test` requires full Xcode (`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`)
+- Dist binaries labeled `arm64`/`universal` should be verified with `file` / `lipo` before publishing

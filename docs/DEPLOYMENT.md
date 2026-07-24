@@ -1,57 +1,80 @@
-# GitHub Pages Deployment Status
+# GitHub Pages Deployment
 
-## ✅ Site is Live and Deployed
+## Live site
 
-**URL:** https://shyamalschandra.github.io/yankovinator/
+**URL:** https://shyamalschandra.github.io/Yankovinator/
 
-## Deployment Configuration
+> GitHub Pages URLs follow the repository name casing (`Yankovinator`).
 
-- **Build Type:** GitHub Actions (workflow)
-- **Source Branch:** main
-- **Source Path:** /docs
-- **Status:** Built and Active
-- **Repository:** Public
+## How it works
 
-## Files Deployed
+Deployment uses the **GitHub Actions** Pages flow (not the legacy “deploy from `/docs` branch folder” mode).
 
-All files in the `docs/` directory are automatically deployed:
+| Setting | Value |
+|---|---|
+| Workflow | [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) |
+| Trigger | push to `main` (docs/site paths) or manual `workflow_dispatch` |
+| Build job | Node 20 (`npm ci` + `tsc`) + LaTeX PDF builds |
+| Deploy job | `actions/deploy-pages` → `github-pages` environment |
+| Published URL | https://shyamalschandra.github.io/Yankovinator/ |
 
-- ✅ `index.html` - Main homepage
-- ✅ `styles.css` - Stylesheet
-- ✅ `script.js` - Compiled JavaScript (from TypeScript)
-- ✅ `script.ts` - TypeScript source
+## What gets published
 
-## Automatic Deployment
+The workflow stages a clean `_site/` artifact (not the raw `docs/` tree):
 
-The site automatically deploys when you push changes to:
-- Files in `docs/` directory
+- `index.html`, `styles.css`, `script.js`
+- `yankovinator.pdf`, `presentation.pdf`, `reference.pdf`
+- `README.md`, `RELEASES.md`, `DEPLOYMENT.md` (from `docs/`)
+- `PROJECT_README.md` (copy of repo-root README)
+
+Source-only files (`.tex`, `.ts`, Beamer aux files, etc.) are **not** uploaded.
+
+## When the workflow runs
+
+Pushes to `main` that touch:
+
+- `docs/**`
 - `.github/workflows/pages.yml`
-- `package.json`
+- `package.json` / `package-lock.json`
 - `tsconfig.json`
+- `README.md`
 
-## Verification
-
-You can verify the site is working by:
-
-1. **Visit the URL:** https://shyamalschandra.github.io/yankovinator/
-2. **Check GitHub Pages settings:** https://github.com/shyamalschandra/Yankovinator/settings/pages
-3. **View deployment logs:** https://github.com/shyamalschandra/Yankovinator/actions
-
-## Troubleshooting
-
-If the site doesn't appear:
-
-1. **Clear browser cache** - Press Ctrl+Shift+R (or Cmd+Shift+R on Mac)
-2. **Wait a few minutes** - GitHub Pages can take 1-5 minutes to update
-3. **Check the Actions tab** - Ensure the workflow completed successfully
-4. **Verify the URL** - Make sure you're using the correct GitHub Pages URL format
-
-## Manual Deployment
-
-To manually trigger a deployment:
+Or run manually:
 
 ```bash
 gh workflow run "Deploy GitHub Pages"
+gh run watch --workflow "Deploy GitHub Pages"
 ```
 
-Or visit: https://github.com/shyamalschandra/Yankovinator/actions/workflows/pages.yml
+## Local preview (site assets)
+
+```bash
+npm ci
+npm run build
+cd docs && python3 -m http.server 8080
+```
+
+Rebuild PDFs locally (optional; CI also builds them):
+
+```bash
+cd docs
+latexmk -pdf -interaction=nonstopmode yankovinator.tex
+latexmk -pdf -interaction=nonstopmode presentation.tex
+latexmk -pdf -interaction=nonstopmode reference.tex
+```
+
+## Verification
+
+1. Open https://shyamalschandra.github.io/Yankovinator/
+2. Confirm PDFs open: `/yankovinator.pdf`, `/presentation.pdf`, `/reference.pdf`
+3. Pages settings: https://github.com/shyamalschandra/Yankovinator/settings/pages  
+   Source should be **GitHub Actions**
+4. Actions: https://github.com/shyamalschandra/Yankovinator/actions/workflows/pages.yml
+
+## Troubleshooting
+
+1. Hard-refresh (Cmd+Shift+R / Ctrl+Shift+R)
+2. Wait 1–5 minutes after a green deploy job
+3. Confirm **build** and **deploy** both succeeded
+4. Confirm Pages source is **GitHub Actions**, not a branch folder
+5. Confirm URL casing: `Yankovinator`

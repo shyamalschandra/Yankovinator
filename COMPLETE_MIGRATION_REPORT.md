@@ -1,3 +1,5 @@
+> **Current status (2026):** Yankovinator ships with **Ollama** (`llama3.2:3b`), not Apple Foundation Models. Treat the Foundation Models content below as historical / aspirational. Use [README.md](README.md) and [QUICK_START.md](QUICK_START.md) for accurate instructions.
+
 # Complete Migration Report: Ollama → Foundation Models
 
 ## ✅ MIGRATION COMPLETE

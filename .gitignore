@@ -97,7 +97,7 @@ iOSInjectionProject/
 output/
 *.log
 
-# Documentation build
+# Documentation / LaTeX build
 docs/_build/
 docs/*.aux
 docs/*.fdb_latexmk
@@ -105,6 +105,14 @@ docs/*.fls
 docs/*.synctex.gz
 docs/*.pdf
 docs/*.out
+docs/*.toc
+docs/*.log
+docs/*.nav
+docs/*.snm
+docs/*.vrb
+docs/*.lof
+docs/*.lot
+_site/
 
 # Python (if any scripts)
 __pycache__/

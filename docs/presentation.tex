@@ -35,7 +35,7 @@
     \item \textbf{What}: Convert songs into parodies with theme constraints
     \item \textbf{How}: NaturalLanguage framework + Ollama LLM
     \item \textbf{Why}: Maintain syllable structure while generating creative parodies
-    \item \textbf{Language}: Swift 6.2+
+    \item \textbf{Language}: Swift 5.10+
 \end{itemize}
 \end{frame}
 
@@ -132,7 +132,8 @@ stars: luminous celestial bodies
     \item \checkmark Capitalization and punctuation matching
     \item \checkmark NaturalLanguage framework integration
     \item \checkmark Ollama LLM support (llama3.2:3b)
-    \item \checkmark Command-line interface
+    \item \checkmark OED dictionary word suggestions
+    \item \checkmark CLI tools: yankovinator, keyword-generator, benchmark
     \item \checkmark Comprehensive testing
     \item \checkmark Proper grammar with contractions
 \end{itemize}
@@ -141,10 +142,10 @@ stars: luminous celestial bodies
 \begin{frame}[fragile]
 \frametitle{CLI Usage}
 \begin{lstlisting}[language=bash]
-yankovinator lyrics.txt \
-  --keywords themes.txt \
+yankovinator data/example_lyrics.txt \
+  --keywords data/example_keywords.txt \
   --ollama-url http://localhost:11434 \
-  --model llama3.2 \
+  --model llama3.2:3b \
   --output parody.txt \
   --analyze \
   --verbose
@@ -157,19 +158,19 @@ yankovinator lyrics.txt \
     \item Unit tests for syllable counting
     \item Integration tests for parody generation
     \item Keyword extraction tests
-    \item XCTest framework
+    \item XCTest framework (requires full Xcode)
 \end{itemize}
 
-Run: \texttt{swift test}
+Run: \texttt{export DEVELOPER\_DIR=/Applications/Xcode.app/Contents/Developer \&\& swift test}
 \end{frame}
 
 \begin{frame}
 \frametitle{Requirements}
 \begin{itemize}
-    \item Swift 6.3+
+    \item Swift 5.10+
     \item macOS 13+ or iOS 16+
     \item Ollama installed and running
-    \item Model: llama3.2 (or compatible)
+    \item Model: llama3.2:3b (or compatible)
 \end{itemize}
 \end{frame}
 
@@ -201,6 +202,8 @@ Run: \texttt{swift test}
     \item \texttt{ParodyGenerator.generateParody()} - Full generation
     \item \texttt{RhymeSchemeAnalyzer.detectRhymeScheme()} - Rhyme detection
     \item \texttt{OllamaClient.generateKeywords()} - Keyword generation
+    \item \texttt{OEDDictionary} - Dictionary-backed word suggestions
+    \item \texttt{BenchmarkRunner} - Performance benchmarking
 \end{itemize}
 
 \textbf{Reference Manual:} Complete API documentation available in \texttt{reference.pdf}

@@ -1,79 +1,96 @@
-# Quick Start Guide - Foundation Models Edition
+# Quick Start Guide
 
-## ✅ Migration Complete!
-
-Yankovinator has been successfully migrated to Apple's Foundation Models framework. All code is updated, tested, and ready for use.
-
-## What Changed?
-
-- **Before**: Required Ollama server running locally
-- **After**: Uses Apple's on-device Foundation Models (no external services!)
+Yankovinator converts songs into theme-based parodies using Apple's NaturalLanguage framework and a local Ollama LLM (`llama3.2:3b` by default).
 
 ## Requirements
 
-- **macOS 15.0+ (Sequoia)** or **iOS 18.0+**
-- Swift 6.2+
-- Foundation Models framework (included with OS)
+- Swift 5.10+ (Xcode recommended for running tests)
+- macOS 13.0+
+- [Ollama](https://ollama.ai) installed and running
+- Model: `llama3.2:3b` (`ollama pull llama3.2:3b`)
 
-## Quick Test
+## Install Ollama (macOS)
 
 ```bash
-# Build the project
+# GUI app (recommended)
+brew install --cask ollama-app
+
+# Or CLI
+brew install ollama
+ollama serve
+```
+
+Then pull the model:
+
+```bash
+ollama pull llama3.2:3b
+ollama list
+```
+
+## Build and Verify
+
+```bash
+git clone https://github.com/shyamalschandra/Yankovinator.git
+cd Yankovinator
 swift build
 
-# Test the CLI
 swift run yankovinator --help
 swift run keyword-generator --help
 swift run benchmark --help
+```
 
-# Run tests
+## Run Tests
+
+XCTest requires the full Xcode toolchain (not Command Line Tools alone):
+
+```bash
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 swift test
 ```
 
+Integration tests need Ollama running with `llama3.2:3b`.
+
 ## Usage Examples
 
-### Generate Keywords
+### Generate keywords
+
 ```bash
 swift run keyword-generator "artificial intelligence" --count 10 --output keywords.txt
 ```
 
-### Generate Parody
+### Generate a parody
+
 ```bash
-swift run yankovinator lyrics.txt --keywords keywords.txt --output parody.txt --verbose
+swift run yankovinator data/example_lyrics.txt \
+  --keywords data/example_keywords.txt \
+  --output parody.txt \
+  --verbose
 ```
 
-### Benchmark Performance
+### Benchmark performance
+
 ```bash
-swift run benchmark --lyrics data/test_short.txt --keywords data/test_keywords.txt --iterations 5
+swift run benchmark \
+  --lyrics data/example_lyrics.txt \
+  --keywords data/example_keywords.txt \
+  --iterations 5
 ```
 
-## What's New
+## Tools
 
-1. **No External Dependencies**: No Ollama server needed
-2. **On-Device AI**: All processing happens locally
-3. **Benchmarking Tool**: New `benchmark` command for performance testing
-4. **Better Privacy**: Data never leaves your device
-
-## Migration Notes
-
-- Removed `--ollama-url` and `--model` options
-- Added optional `--model-identifier` option
-- All functionality preserved, now using Foundation Models
-
-## Next Steps
-
-1. Test on macOS 15.0+ system
-2. Run benchmarks to measure performance
-3. Create release v2.0.0
-4. Update Homebrew formula
+| Command | Purpose |
+|---|---|
+| `yankovinator` | Generate syllable-accurate parodies |
+| `keyword-generator` | Create `keyword: definition` theme files via Ollama |
+| `benchmark` | Measure generation performance |
 
 ## Documentation
 
-- `README.md` - Complete usage guide
-- `MIGRATION_SUMMARY.md` - Detailed migration notes
-- `RELEASE_NOTES_v2.0.0.md` - Release information
-- `DEPLOYMENT_CHECKLIST.md` - Release checklist
+- [README.md](README.md) — full guide
+- [docs/RELEASES.md](docs/RELEASES.md) — binary releases
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — GitHub Pages
+- Website: https://shyamalschandra.github.io/Yankovinator/
 
-## Support
+## Note on older migration docs
 
-All code is committed and pushed to the repository. Ready for release!
+Some repository markdown files describe an unfinished Foundation Models migration. **The shipped product uses Ollama.** Prefer this guide and `README.md` for current instructions.

@@ -51,8 +51,10 @@ Yankovinator consists of several key components:
     \item \texttt{Yankovinator} - Main library interface
     \item \texttt{ParodyGenerator} - Core parody generation engine
     \item \texttt{OllamaClient} - Interface to Ollama LLM API
+    \item \texttt{OEDDictionary} - Dictionary-backed word suggestions
     \item \texttt{SyllableCounter} - Syllable counting utilities
     \item \texttt{RhymeSchemeAnalyzer} - Rhyme detection and analysis
+    \item \texttt{BenchmarkRunner} - Performance measurement for the \texttt{benchmark} CLI
 \end{itemize}
 
 \section{Yankovinator}
@@ -388,6 +390,32 @@ let keywords = try await client.generateKeywords(
 )
 \end{lstlisting}
 
+\section{OEDDictionary}
+
+Optional dictionary helper that suggests syllable-matched words using the 1913 Oxford / Webster dictionary (Project Gutenberg text, cached locally when downloaded).
+
+\subsection{Initialization}
+
+\textbf{Signature:}
+\begin{lstlisting}
+public init(
+    dictionaryPath: String? = nil,
+    dictionaryURL: String? = nil,
+    syllableCounter: SyllableCounter.Type = SyllableCounter.self
+)
+\end{lstlisting}
+
+\textbf{Notes:}
+\begin{itemize}
+    \item If \texttt{dictionaryPath} exists, the file is loaded immediately
+    \item Otherwise the dictionary may be downloaded asynchronously and cached
+    \item Dictionary support is optional; generation still works without it
+\end{itemize}
+
+\subsection{Usage in generation}
+
+\texttt{ParodyGenerator} constructs an \texttt{OEDDictionary} when \texttt{useDictionary} is \texttt{true} (default) and feeds position-aware suggestions into Ollama prompts.
+
 \section{SyllableCounter}
 
 Utility for counting syllables in words and lines.
@@ -616,7 +644,7 @@ swift run yankovinator --help
 \subsection{Requirements}
 
 \begin{itemize}
-    \item Swift 6.2 or later
+    \item Swift 5.10 or later
     \item macOS 13+ or iOS 16+
     \item Ollama installed and running
     \item Model: llama3.2:3b (install with \texttt{ollama pull llama3.2:3b})
@@ -834,6 +862,7 @@ None currently defined.
     \item \textbf{v1.0} - Initial release with basic parody generation
     \item \textbf{v1.1} - Added semantic coherence features
     \item \textbf{v1.2} - Added capitalization and punctuation matching
+    \item \textbf{v1.01} - Current binary release: Ollama \texttt{llama3.2:3b}, OED suggestions, \texttt{benchmark} CLI, sample data under \texttt{data/}
 \end{itemize}
 
 \section{License}

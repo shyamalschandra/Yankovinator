@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Yankovinator - AI-powered parody generator that creates amazing song parodies with perfect syllable matching and rhyming schemes">
+    <meta name="description" content="Yankovinator - local AI parody generator using NaturalLanguage and Ollama (llama3.2:3b) with syllable matching, rhyme schemes, and theme keywords">
     <meta name="copyright" content="Copyright (C) 2025, Shyamal Suhana Chandra. Invented by Shyamal Chandra. Contact ssc56@duck.com to license code for commercial and non-commercial purposes.">
     <title>Yankovinator - AI Parody Generator</title>
     <link rel="stylesheet" href="styles.css">
@@ -125,7 +125,7 @@
                     <div class="code-content">
                         <div class="code-line">
                             <span class="code-prompt">$</span>
-                            <span class="code-text">swift run yankovinator lyrics.txt</span>
+                            <span class="code-text">swift run yankovinator data/example_lyrics.txt --keywords data/example_keywords.txt</span>
                         </div>
                         <div class="code-line typing">
                             <span class="code-output">Generating parody with</span>
@@ -232,6 +232,26 @@
                     </div>
                     <h3>Ollama Integration</h3>
                     <p>Powered by local LLM (llama3.2:3b) for privacy-focused, high-quality text generation.</p>
+                </div>
+                <div class="feature-card" data-aos="fade-up" data-aos-delay="550">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="22" y="25" width="56" height="50" rx="6" fill="none" stroke="currentColor" stroke-width="3"/>
+                            <path d="M 35 40 L 65 40 M 35 52 L 55 52 M 35 64 L 60 64" stroke="currentColor" stroke-width="3"/>
+                        </svg>
+                    </div>
+                    <h3>OED Word Suggestions</h3>
+                    <p>Uses Oxford English Dictionary (1913 / Webster) lookups to suggest stronger syllable-matched word choices.</p>
+                </div>
+                <div class="feature-card" data-aos="fade-up" data-aos-delay="600">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M 20 70 L 40 40 L 55 55 L 80 25" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                            <circle cx="80" cy="25" r="5" fill="currentColor"/>
+                        </svg>
+                    </div>
+                    <h3>Benchmark CLI</h3>
+                    <p>Measure generation performance with the built-in <code>benchmark</code> tool across configurable iterations.</p>
                 </div>
             </div>
         </div>
@@ -412,8 +432,8 @@
                             <div class="step-number">6</div>
                             <h3>Generate Your First Parody</h3>
                             <div class="code-block">
-                                <code>yankovinator lyrics.txt --keywords themes.txt</code>
-                                <button class="copy-btn" data-copy="yankovinator lyrics.txt --keywords themes.txt">
+                                <code>yankovinator data/example_lyrics.txt --keywords data/example_keywords.txt</code>
+                                <button class="copy-btn" data-copy="yankovinator data/example_lyrics.txt --keywords data/example_keywords.txt">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -443,8 +463,8 @@
                             <div class="step-number">2</div>
                             <h3>Build the Project</h3>
                             <div class="code-block">
-                                <code>cd yankovinator && swift build</code>
-                                <button class="copy-btn" data-copy="cd yankovinator && swift build">
+                                <code>cd Yankovinator && swift build</code>
+                                <button class="copy-btn" data-copy="cd Yankovinator && swift build">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -500,8 +520,8 @@
                             <div class="step-number">6</div>
                             <h3>Generate Your First Parody</h3>
                             <div class="code-block">
-                                <code>swift run yankovinator lyrics.txt --keywords themes.txt</code>
-                                <button class="copy-btn" data-copy="swift run yankovinator lyrics.txt --keywords themes.txt">
+                                <code>swift run yankovinator data/example_lyrics.txt --keywords data/example_keywords.txt</code>
+                                <button class="copy-btn" data-copy="swift run yankovinator data/example_lyrics.txt --keywords data/example_keywords.txt">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>

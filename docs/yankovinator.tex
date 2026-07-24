@@ -46,21 +46,24 @@ Yankovinator is a Swift-based application that converts songs into parodies usin
 
 \subsection{Core Components}
 
-Yankovinator consists of four main components:
+Yankovinator consists of the following main components:
 
 \begin{enumerate}
     \item \textbf{SyllableCounter}: Analyzes syllable structure using NaturalLanguage framework
+    \item \textbf{RhymeSchemeAnalyzer}: Detects and groups rhyming lines from original lyrics
+    \item \textbf{OEDDictionary}: Suggests dictionary-backed word substitutions
     \item \textbf{OllamaClient}: Interfaces with Ollama API for parody generation
     \item \textbf{ParodyGenerator}: Orchestrates the parody creation process
+    \item \textbf{BenchmarkRunner}: Measures generation performance for the \texttt{benchmark} CLI
     \item \textbf{Yankovinator}: Main library interface
 \end{enumerate}
 
 \subsection{Technology Stack}
 
 \begin{itemize}
-    \item \textbf{Swift 6.2+}: Primary programming language
+    \item \textbf{Swift 5.10+}: Primary programming language (Swift Package Manager)
     \item \textbf{NaturalLanguage}: Apple framework for linguistic analysis
-    \item \textbf{Ollama}: Local LLM for text generation
+    \item \textbf{Ollama}: Local LLM for text generation (\texttt{llama3.2:3b} default)
     \item \textbf{AsyncHTTPClient}: Asynchronous HTTP client for API communication
     \item \textbf{ArgumentParser}: CLI argument parsing
 \end{itemize}
@@ -165,7 +168,7 @@ Main entry point for parody generation.
     \item \texttt{originalLyrics: [String]} - Original song lines
     \item \texttt{keywords: [String: String]} - Theme keywords and definitions
     \item \texttt{ollamaURL: String} - Ollama API base URL (default: http://localhost:11434)
-    \item \texttt{ollamaModel: String} - Ollama model name (default: llama3.2)
+    \item \texttt{ollamaModel: String} - Ollama model name (default: llama3.2:3b)
 \end{itemize}
 
 \textbf{Returns:} \texttt{[String]} - Generated parody lines
@@ -291,9 +294,18 @@ The project includes comprehensive tests using XCTest:
     \item Keyword extraction tests
 \end{itemize}
 
-Run tests with:
+Run tests with (requires full Xcode for XCTest):
 \begin{lstlisting}[language=bash]
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 swift test
+\end{lstlisting}
+
+Sample inputs for local runs:
+\begin{lstlisting}[language=bash]
+swift run yankovinator data/example_lyrics.txt \
+  --keywords data/example_keywords.txt --verbose
+swift run benchmark --lyrics data/example_lyrics.txt \
+  --keywords data/example_keywords.txt --iterations 5
 \end{lstlisting}
 
 \section{Installation}
@@ -301,10 +313,11 @@ swift test
 \subsection{Requirements}
 
 \begin{itemize}
-    \item Swift 6.3 or later
+    \item Swift 5.10 or later
     \item macOS 13+ or iOS 16+
     \item Ollama installed and running
     \item Model: llama3.2:3b (install with \texttt{ollama pull llama3.2:3b})
+    \item Full Xcode app when running \texttt{swift test}
 \end{itemize}
 
 \subsection{Homebrew Installation (Recommended)}

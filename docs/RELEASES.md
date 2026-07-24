@@ -1,143 +1,113 @@
 # Binary Releases
 
-Yankovinator provides pre-built universal binaries for macOS, eliminating the need to build from source.
+Yankovinator publishes pre-built macOS binaries so you can install without a Swift toolchain.
 
-## Downloading Binaries
+**Current release:** [v1.01](https://github.com/shyamalschandra/Yankovinator/releases/tag/v1.01)
 
-### From GitHub Releases
+## What each archive contains
 
-1. Visit the [Releases page](https://github.com/shyamalschandra/Yankovinator/releases)
-2. Download the appropriate binary for your system:
-   - **Universal Binary** (recommended): Works on both Intel and Apple Silicon Macs
-   - **Intel (x86_64)**: For Intel-based Macs
-   - **Apple Silicon (arm64)**: For Apple Silicon Macs
+- `yankovinator` — parody generator CLI
+- `keyword-generator` — theme keyword generator CLI
+- `benchmark` — performance benchmark CLI (when included in the build)
+- `*.sha256` — checksums for verification
 
-### Installation
+## Download
+
+1. Open [Releases](https://github.com/shyamalschandra/Yankovinator/releases)
+2. Choose an archive:
+   - **Universal** (recommended): Intel + Apple Silicon
+   - **arm64**: Apple Silicon
+   - **x86_64**: Intel
+
+### Install (universal)
 
 ```bash
-# Download the universal binary
 curl -L -o yankovinator-universal.tar.gz \
   https://github.com/shyamalschandra/Yankovinator/releases/download/v1.01/yankovinator-universal.tar.gz
 
-# Extract
+# Verify checksum (compare to the release .sha256 asset)
+shasum -a 256 yankovinator-universal.tar.gz
+
 tar -xzf yankovinator-universal.tar.gz
 
-# Install to /usr/local/bin (requires sudo)
+# System-wide
 sudo mv yankovinator keyword-generator /usr/local/bin/
+# sudo mv benchmark /usr/local/bin/   # if present
 
-# Or install to ~/.local/bin (no sudo required)
+# Or user-local
 mkdir -p ~/.local/bin
 mv yankovinator keyword-generator ~/.local/bin/
-export PATH="$HOME/.local/bin:$PATH"  # Add to ~/.zshrc or ~/.bash_profile
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### Verification
+### Verify
 
 ```bash
-# Verify installation
 yankovinator --help
 keyword-generator --help
+benchmark --help   # if installed
 
-# Check binary architecture (for universal binary)
-file $(which yankovinator)
-lipo -info $(which yankovinator)  # Should show both architectures
+file "$(which yankovinator)"
+lipo -info "$(which yankovinator)"   # universal should list both archs
 ```
 
-## Homebrew Installation
+Binaries still require a running Ollama instance and the `llama3.2:3b` model. See the root [README.md](../README.md).
 
-### Using a Homebrew Tap
+## Homebrew
 
-1. Create a Homebrew tap repository (if not already created):
-   ```bash
-   # Create repository: homebrew-yankovinator
-   # Place the Formula/yankovinator.rb file there
-   ```
+```bash
+brew tap shyamalschandra/yankovinator
+brew install yankovinator
+```
 
-2. Install via Homebrew:
-   ```bash
-   brew tap shyamalschandra/yankovinator
-   brew install yankovinator
-   ```
+After a new GitHub release, update the tap formula version + SHA256:
 
-### Updating the Homebrew Formula
+```bash
+shasum -a 256 yankovinator-universal.tar.gz
+# edit Formula/yankovinator.rb in the tap, then commit/push
+```
 
-After creating a new release:
+Local formula template in this repo: [`Formula/yankovinator.rb`](../Formula/yankovinator.rb).
 
-1. Update the version in `Formula/yankovinator.rb`
-2. Calculate the SHA256 checksum:
-   ```bash
-   shasum -a 256 yankovinator-universal.tar.gz
-   ```
-3. Update the `sha256` field in the formula
-4. Commit and push to your Homebrew tap repository
+## Creating a release
 
-## Creating a Release
+### Automatic (GitHub Actions)
 
-### Automatic Release via GitHub Actions
+```bash
+git tag -a v1.01 -m "Release version 1.01"
+git push origin v1.01
+```
 
-1. **Tag a release:**
-   ```bash
-   git tag -a v1.0.0 -m "Release version 1.0.0"
-   git push origin v1.0.0
-   ```
+The **Build and Release** workflow builds architecture artifacts, packages archives, and uploads release assets.
 
-2. The GitHub Actions workflow will automatically:
-   - Build binaries for both architectures
-   - Create universal binaries
-   - Upload to GitHub Releases
-   - Generate checksums
+### Manual workflow dispatch
 
-### Manual Release
+Actions → **Build and Release** → **Run workflow** → enter a version tag (for example `v1.01`).
 
-1. **Trigger workflow manually:**
-   - Go to Actions → Build and Release
-   - Click "Run workflow"
-   - Enter version tag (e.g., `v1.0.0`)
+### Local packaging sketch
 
-2. **Or create release manually:**
-   - Build locally:
-     ```bash
-     swift build -c release
-     ```
-   - Create universal binary:
-     ```bash
-     # Build for both architectures
-     swift build -c release  # arm64
-     cp .build/.../yankovinator dist/arm64/
-     arch -x86_64 swift build -c release  # x86_64
-     cp .build/.../yankovinator dist/x86_64/
-     
-     # Create universal binary
-     lipo -create dist/x86_64/yankovinator dist/arm64/yankovinator \
-       -output dist/universal/yankovinator
-     ```
-   - Upload to GitHub Releases
-
-## Binary Structure
-
-Each release contains:
-- `yankovinator`: Main parody generation tool
-- `keyword-generator`: Keyword generation tool
-- Checksum files (`.sha256`) for verification
+```bash
+swift build -c release
+# copy products into dist/{arm64,x86_64}/ then:
+lipo -create dist/x86_64/yankovinator dist/arm64/yankovinator \
+  -output dist/universal/yankovinator
+```
 
 ## Troubleshooting
 
-### Binary not executable
+### Not executable
 
 ```bash
-chmod +x yankovinator keyword-generator
+chmod +x yankovinator keyword-generator benchmark
 ```
 
 ### Architecture mismatch
 
-If you get architecture errors:
-- Use the universal binary (recommended)
-- Or download the architecture-specific binary for your Mac
+Use the universal archive, or the archive matching your Mac (`uname -m`).
 
-### Verification failed
+### Checksum mismatch
 
-Check the SHA256 checksum:
 ```bash
 shasum -a 256 yankovinator-universal.tar.gz
-# Compare with the .sha256 file from the release
+# compare with the published .sha256 file
 ```
