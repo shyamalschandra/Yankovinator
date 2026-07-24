@@ -1,6 +1,6 @@
 > **Current status (2026):** Yankovinator ships with **Ollama** (`llama3.2:3b`), not Apple Foundation Models. Use [README.md](README.md) and [QUICK_START.md](QUICK_START.md) for accurate instructions.
 
-# Deployment Checklist (v1.01 / Ollama)
+# Deployment Checklist (v1.02 / Ollama)
 
 ## Pre-release
 
@@ -17,8 +17,8 @@
 
 ```bash
 # Tag and push (example)
-git tag -a v1.01 -m "Release v1.01"
-git push origin v1.01
+git tag -a v1.02 -m "Release v1.02"
+git push origin v1.02
 
 # Or dispatch Build and Release workflow with version tag
 ```

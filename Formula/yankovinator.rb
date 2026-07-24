@@ -6,7 +6,7 @@
 class Yankovinator < Formula
   desc "Convert songs into parodies with theme-based constraints using llama on Ollama"
   homepage "https://github.com/shyamalschandra/Yankovinator"
-  version "1.01"
+  version "1.02"
   # Requires macOS 13.0+ for Ollama support
   depends_on :macos => :ventura
   

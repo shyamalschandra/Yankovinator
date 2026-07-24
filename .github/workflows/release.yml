@@ -86,9 +86,21 @@ jobs:
       - name: Create binary archives
         run: |
           cd dist/arm64
-          tar -czf ../yankovinator-arm64.tar.gz yankovinator keyword-generator
+          if [ -f benchmark ]; then
+            tar -czf ../yankovinator-arm64.tar.gz yankovinator keyword-generator benchmark
+          else
+            tar -czf ../yankovinator-arm64.tar.gz yankovinator keyword-generator
+          fi
           cd ../x86_64
-          tar -czf ../yankovinator-x86_64.tar.gz yankovinator keyword-generator 2>/dev/null || echo "x86_64 archive creation skipped"
+          if [ -f yankovinator ] && [ -f keyword-generator ]; then
+            if [ -f benchmark ]; then
+              tar -czf ../yankovinator-x86_64.tar.gz yankovinator keyword-generator benchmark
+            else
+              tar -czf ../yankovinator-x86_64.tar.gz yankovinator keyword-generator
+            fi
+          else
+            echo "x86_64 archive creation skipped"
+          fi
           cd ../..
       
       - name: Upload binaries
@@ -238,49 +250,40 @@ jobs:
           name: Release ${{ steps.get_version.outputs.version }}
           body: |
             ## Yankovinator ${{ steps.get_version.outputs.version }}
-            
+
+            Local AI parody generator using NaturalLanguage + Ollama (`llama3.2:3b`).
+
+            ### What's new in 1.02
+            - Unsupervised NLP: embedding lexical substitution, rhyme clustering, coherence critic
+            - OED/Webster dictionary word suggestions
+            - Docs/GitHub Pages refresh + sample data (`data/example_*.txt`)
+            - CLI tools: `yankovinator`, `keyword-generator`, `benchmark`
+
             ### Downloads
-            
-            - **Universal Binary** (recommended): `yankovinator-universal.tar.gz` - Works on both Intel and Apple Silicon Macs
-            - **Intel (x86_64)**: `yankovinator-x86_64.tar.gz` - For Intel-based Macs
-            - **Apple Silicon (arm64)**: `yankovinator-arm64.tar.gz` - For Apple Silicon Macs
-            
-            ### Installation via Homebrew
-            
+            - **Universal** (recommended): `yankovinator-universal.tar.gz`
+            - **Apple Silicon**: `yankovinator-arm64.tar.gz`
+            - **Intel**: `yankovinator-x86_64.tar.gz`
+
+            ### Homebrew
             ```bash
             brew tap shyamalschandra/yankovinator
             brew install yankovinator
             ```
-            
-            ### Installation
-            
+
+            ### Manual install
             ```bash
-            # Download and extract
             tar -xzf yankovinator-universal.tar.gz
-            
-            # Move to a directory in your PATH (e.g., /usr/local/bin)
             sudo mv yankovinator keyword-generator /usr/local/bin/
-            # Include benchmark if available
             [ -f benchmark ] && sudo mv benchmark /usr/local/bin/
-            
-            # Or to ~/.local/bin (if in PATH)
-            mkdir -p ~/.local/bin
-            mv yankovinator keyword-generator ~/.local/bin/
-            [ -f benchmark ] && mv benchmark ~/.local/bin/
-            ```
-            
-            ### Verification
-            
-            ```bash
-            # Verify installation
             yankovinator --help
             keyword-generator --help
-            benchmark --help  # If benchmark is included
             ```
-            
+
+            ### Runtime requirement
+            Ollama must be running with `llama3.2:3b` (`ollama pull llama3.2:3b`).
+
             ### Checksums
-            
-            See the `.sha256` files for verification.
+            See the accompanying `.sha256` files.
           files: |
             dist/yankovinator-universal.tar.gz
             dist/yankovinator-universal.tar.gz.sha256
