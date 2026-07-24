@@ -26,7 +26,7 @@ class Yankovinator < Formula
   # Calculate SHA256 after creating the release
   # Run: shasum -a 256 yankovinator-universal.tar.gz
   # Note: This will be updated after the GitHub release is created with proper universal binary
-  sha256 "0dca2f61a9fee93abbfea5563f3eda6f69596bc234c6e794b27ba2d15750fe8e"  # Temporary - update after GitHub Actions builds proper universal binary
+  sha256 "86be4e2d9beae0a4a43ebced31dcce595f335b7066e2155b9a653b502f957aba"
   
   def install
     # Extract and install binaries
