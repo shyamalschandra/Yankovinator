@@ -76,6 +76,22 @@ swift run benchmark \
   --iterations 5
 ```
 
+### Parallel batch on cloud Ollama (10 workers)
+
+```bash
+mkdir -p songs out
+cp data/example_lyrics.txt songs/a.txt
+cp data/example_lyrics.txt songs/b.txt
+
+swift run yankovinator --input-dir ./songs --output-dir ./out \
+  --keywords data/example_keywords.txt \
+  --ollama-url https://ollama.example.com \
+  --workers 10 \
+  --verbose
+```
+
+`--workers` / `--jobs` caps concurrent song jobs (1–32). Point `--ollama-url` at any reachable Ollama host.
+
 ## Tools
 
 | Command | Purpose |

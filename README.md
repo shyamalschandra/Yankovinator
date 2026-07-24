@@ -22,7 +22,8 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 - Oxford English Dictionary (1913 / Webster) word suggestions for richer substitutions
 - Unsupervised NLP helpers: embedding lexical substitution, rhyme clustering, next-line coherence critic
 - NaturalLanguage framework integration
-- Local Ollama integration (`llama3.2:3b` by default)
+- Local or cloud Ollama integration (`llama3.2:3b` by default; any `--ollama-url`)
+- Parallel workers for batch jobs (`--workers 10` / `--jobs 10`) against cloud Ollama
 - CLI tools: `yankovinator`, `keyword-generator`, `benchmark`
 - XCTest suite (unit + Ollama integration tests)
 - LaTeX/Beamer docs and GitHub Pages site
@@ -40,11 +41,11 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.02.1**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.03**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.02.1/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.03/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/
@@ -98,14 +99,17 @@ swift run keyword-generator <subject1> [subject2] ... [options]
 **Options:**
 
 - `--count, -c <number>`: Number of keyword pairs (default: 10)
-- `--ollama-url, -u <url>`: Ollama API base URL (default: `http://localhost:11434`)
+- `--ollama-url, -u <url>`: Ollama API base URL (local or cloud; default: `http://localhost:11434`)
 - `--model, -m <name>`: Ollama model (default: `llama3.2:3b`)
 - `--output, -o <file>`: Output path (default: stdout)
+- `--workers, --jobs <n>`: Max parallel subject jobs (1–32; use `10` for cloud)
 - `--verbose, -v`: Verbose output
 
 ```bash
 swift run keyword-generator "artificial intelligence" --output ai_keywords.txt
 swift run keyword-generator "space exploration" "NASA" --count 15 --output space_keywords.txt
+swift run keyword-generator "ai" "space" "music" --workers 10 \
+  --ollama-url https://ollama.example.com --output keywords.txt
 ```
 
 ### Parody generator
@@ -125,9 +129,12 @@ swift run yankovinator <lyrics-file> [options]
 **Options:**
 
 - `--keywords, -k <file>`: Keywords file (`keyword: definition`)
-- `--ollama-url, -u <url>`: Ollama API base URL
+- `--ollama-url, -u <url>`: Ollama API base URL (local or cloud)
 - `--model, -m <name>`: Ollama model (default: `llama3.2:3b`)
-- `--output, -o <file>`: Output path (default: stdout)
+- `--output, -o <file>`: Output path for single-file mode (default: stdout)
+- `--input-dir <dir>`: Directory of `.txt` lyrics files (batch / parallel jobs)
+- `--output-dir <dir>`: Output directory for batch mode (writes `<stem>.parody.txt`)
+- `--workers, --jobs <n>`: Max parallel jobs (1–32; default 1; use `10` for cloud batch)
 - `--analyze, -a`: Show syllable analysis
 - `--verbose, -v`: Verbose output
 
@@ -145,6 +152,20 @@ swift run yankovinator data/example_lyrics.txt \
   --output parody.txt
 ```
 
+**Parallel batch (10 workers on cloud Ollama):**
+
+```bash
+mkdir -p songs out
+cp data/example_lyrics.txt songs/song1.txt
+cp data/example_lyrics.txt songs/song2.txt
+
+swift run yankovinator --input-dir ./songs --output-dir ./out \
+  --keywords data/example_keywords.txt \
+  --ollama-url https://ollama.example.com \
+  --workers 10 \
+  --verbose
+```
+
 ### Benchmark
 
 ```bash
@@ -152,6 +173,15 @@ swift run benchmark \
   --lyrics data/example_lyrics.txt \
   --keywords data/example_keywords.txt \
   --iterations 5
+```
+
+```bash
+swift run benchmark \
+  --lyrics data/example_lyrics.txt \
+  --keywords data/example_keywords.txt \
+  --iterations 10 \
+  --workers 10 \
+  --ollama-url https://ollama.example.com
 ```
 
 ### Programmatic usage

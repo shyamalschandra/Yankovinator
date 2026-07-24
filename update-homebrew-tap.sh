@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="${1:-1.02.1}"
+VERSION="${1:-1.03}"
 TAG="v${VERSION}"
 GITHUB_USER="shyamalschandra"
 MAIN_REPO="Yankovinator"

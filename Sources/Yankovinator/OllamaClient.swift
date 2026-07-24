@@ -37,8 +37,10 @@ public class OllamaClient {
                 connect: .seconds(30),
                 read: .seconds(120)
             )
-            // Enable connection pooling and keep-alive
+            // Enable connection pooling and keep-alive for parallel cloud workers
             configuration.connectionPool.idleTimeout = .seconds(60)
+            configuration.connectionPool.concurrentHTTP1ConnectionsPerHostSoftLimit =
+                ParallelJobRunner.maxWorkers
             // Use singleton event loop group (recommended approach)
             // This uses a system-managed shared event loop that's properly initialized
             Self.sharedHTTPClient = HTTPClient(eventLoopGroupProvider: .singleton, configuration: configuration)
