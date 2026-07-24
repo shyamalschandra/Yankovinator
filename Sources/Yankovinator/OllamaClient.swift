@@ -367,6 +367,93 @@ public class OllamaClient {
         
         return cleaned
     }
+
+    /// Unsupervised next-line surprise probe in \[0, 1\] (1 = highly surprising / incoherent).
+    /// Asks the model for a numeric score; no labeled coherence data required.
+    public func estimateNextLineSurprise(
+        previousLines: [String],
+        candidateLine: String,
+        keywords: [String: String] = [:]
+    ) async throws -> Double {
+        let context = previousLines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let contextBlock = context.isEmpty ? "(none)" : context.suffix(6).joined(separator: "\n")
+        let theme = keywords.isEmpty
+            ? "(none)"
+            : keywords.map { "\($0.key): \($0.value)" }.joined(separator: "; ")
+
+        let prompt = """
+        You are a coherence critic. Score how surprising/incoherent the candidate next line is given prior lines.
+        Return ONLY a decimal number between 0.0 and 1.0 inclusive.
+        0.0 = perfectly expected continuation, 1.0 = random/incoherent break.
+
+        Theme keywords: \(theme)
+
+        Previous lines:
+        \(contextBlock)
+
+        Candidate next line:
+        \(candidateLine)
+
+        Surprise score:
+        """
+
+        let cleanBaseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let apiURL = "\(cleanBaseURL)/api/generate"
+        guard URL(string: apiURL) != nil else {
+            throw OllamaError.invalidURL
+        }
+
+        let requestBody: [String: Any] = [
+            "model": model,
+            "prompt": prompt,
+            "stream": false,
+            "options": [
+                "temperature": 0.0,
+                "top_p": 0.1,
+                "num_predict": 8
+            ]
+        ]
+
+        let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+        var request = HTTPClientRequest(url: apiURL)
+        request.method = .POST
+        request.headers.add(name: "Content-Type", value: "application/json")
+        request.headers.add(name: "Accept", value: "application/json")
+        request.body = .bytes(ByteBuffer(data: jsonData))
+
+        let response: HTTPClientResponse
+        do {
+            response = try await httpClient.execute(request, timeout: .seconds(45))
+        } catch {
+            throw OllamaError.networkError(error)
+        }
+
+        var responseData = Data()
+        for try await buffer in response.body {
+            responseData.append(contentsOf: buffer.readableBytesView)
+        }
+
+        guard response.status == .ok,
+              let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+              let text = json["response"] as? String else {
+            throw OllamaError.invalidResponse
+        }
+
+        return Self.parseUnitInterval(from: text)
+    }
+
+    /// Parse the first 0...1 decimal found in model output.
+    static func parseUnitInterval(from text: String) -> Double {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pattern = #"0?\.\d+|1(?:\.0+)?|0"#
+        if let regex = try? NSRegularExpression(pattern: pattern),
+           let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+           let range = Range(match.range, in: trimmed),
+           let value = Double(trimmed[range]) {
+            return min(max(value, 0.0), 1.0)
+        }
+        return 0.5
+    }
     
     /// Check if Ollama is available and model exists
     /// - Returns: True if Ollama is reachable and model is available

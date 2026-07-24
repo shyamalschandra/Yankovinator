@@ -20,6 +20,7 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 - Theme-based keyword integration
 - Automatic keyword generation from subjects via Ollama
 - Oxford English Dictionary (1913 / Webster) word suggestions for richer substitutions
+- Unsupervised NLP helpers: embedding lexical substitution, rhyme clustering, next-line coherence critic
 - NaturalLanguage framework integration
 - Local Ollama integration (`llama3.2:3b` by default)
 - CLI tools: `yankovinator`, `keyword-generator`, `benchmark`
@@ -260,12 +261,15 @@ pdflatex reference.tex
 ### Core components
 
 1. **SyllableCounter** — syllable structure via NaturalLanguage + heuristics
-2. **RhymeSchemeAnalyzer** — rhyme groups / schemes from original lyrics
-3. **OEDDictionary** — dictionary-backed word suggestions
-4. **OllamaClient** — Ollama HTTP API (AsyncHTTPClient)
-5. **ParodyGenerator** — generation + refinement pipeline
-6. **BenchmarkRunner** — timing harness for CLI benchmarking
-7. **Yankovinator** — public library facade
+2. **RhymeSchemeAnalyzer** — baseline rhyme groups / schemes
+3. **UnsupervisedRhymeClustering** — phonetic + embedding rhyme discovery (unlabeled)
+4. **LexicalSubstitutionEngine** — syllable-matched NLEmbedding neighbors (MLM-style)
+5. **CoherenceCritic** — next-line surprise / coherence scoring (embedding + optional Ollama)
+6. **OEDDictionary** — dictionary-backed word suggestions
+7. **OllamaClient** — Ollama HTTP API (AsyncHTTPClient)
+8. **ParodyGenerator** — generation + refinement pipeline
+9. **BenchmarkRunner** — timing harness for CLI benchmarking
+10. **Yankovinator** — public library facade
 
 ### Technology stack
 

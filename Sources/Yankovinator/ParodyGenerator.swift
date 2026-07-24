@@ -9,6 +9,10 @@ public class ParodyGenerator {
     private let ollamaClient: OllamaClient
     private let syllableCounter: SyllableCounter.Type
     private let dictionary: OEDDictionary?
+    private let lexicalSubstitution: LexicalSubstitutionEngine
+    private let rhymeClustering: UnsupervisedRhymeClustering
+    private let coherenceCritic: CoherenceCritic
+    private let useUnsupervisedNLP: Bool
     
     /// Initialize the parody generator
     /// - Parameters:
@@ -16,14 +20,21 @@ public class ParodyGenerator {
     ///   - ollamaModel: Model name to use (default: llama3.2:3b)
     ///   - dictionaryPath: Optional path to dictionary file
     ///   - useDictionary: Whether to use OED dictionary for better word choices (default: true)
+    ///   - useUnsupervisedNLP: Enable embedding substitution, rhyme clustering, coherence critic (default: true)
     public init(
         ollamaBaseURL: String = "http://localhost:11434",
         ollamaModel: String = "llama3.2:3b",
         dictionaryPath: String? = nil,
-        useDictionary: Bool = true
+        useDictionary: Bool = true,
+        useUnsupervisedNLP: Bool = true
     ) {
-        self.ollamaClient = OllamaClient(baseURL: ollamaBaseURL, model: ollamaModel)
+        let client = OllamaClient(baseURL: ollamaBaseURL, model: ollamaModel)
+        self.ollamaClient = client
         self.syllableCounter = SyllableCounter.self
+        self.lexicalSubstitution = LexicalSubstitutionEngine()
+        self.rhymeClustering = UnsupervisedRhymeClustering()
+        self.coherenceCritic = CoherenceCritic(ollamaClient: client)
+        self.useUnsupervisedNLP = useUnsupervisedNLP
         
         // Initialize dictionary if requested
         if useDictionary {
@@ -63,13 +74,26 @@ public class ParodyGenerator {
         }
         
         // Analyze original song structure (only non-empty lines)
-        let syllableStructure = syllableCounter.analyzeSongStructure(nonEmptyLyrics.map { $0.1 })
+        let nonEmptyTexts = nonEmptyLyrics.map { $0.1 }
+        let syllableStructure = syllableCounter.analyzeSongStructure(nonEmptyTexts)
         
-        // Detect rhyming scheme from original lyrics
-        let (rhymeGroups, rhymeScheme) = RhymeSchemeAnalyzer.detectRhymeScheme(from: nonEmptyLyrics.map { $0.1 })
-        
-        if verbose {
-            print("Detected rhyme scheme: \(rhymeScheme)")
+        // Detect rhyming scheme (unsupervised clustering when enabled)
+        let rhymeGroups: [String]
+        let rhymeScheme: String
+        if useUnsupervisedNLP {
+            let clustered = rhymeClustering.clusterRhymeScheme(from: nonEmptyTexts)
+            rhymeGroups = clustered.rhymeGroups
+            rhymeScheme = clustered.scheme
+            if verbose {
+                print("Detected rhyme scheme: \(rhymeScheme) [\(clustered.method)]")
+            }
+        } else {
+            let detected = RhymeSchemeAnalyzer.detectRhymeScheme(from: nonEmptyTexts)
+            rhymeGroups = detected.rhymeGroups
+            rhymeScheme = detected.scheme
+            if verbose {
+                print("Detected rhyme scheme: \(rhymeScheme)")
+            }
         }
         
         var parodyLines: [String] = []
@@ -109,9 +133,10 @@ public class ParodyGenerator {
             let wordSyllables = syllableCounter.analyzeWordSyllables(in: originalLine)
             let wordSyllablePattern = wordSyllables.map { "\($0.word)(\($0.syllables))" }.joined(separator: " ")
             
-            // Get word suggestions from dictionary for better word choices
+            // Merge OED + unsupervised embedding substitutions
             let wordSuggestions = getWordSuggestions(
-                for: wordSyllables.map { $0.syllables },
+                for: originalLine,
+                syllableCounts: wordSyllables.map { $0.syllables },
                 theme: Array(keywords.keys),
                 excludeWords: usedWords
             )
@@ -229,6 +254,55 @@ public class ParodyGenerator {
                     }
                 }
             }
+
+            // Unsupervised coherence critic: regenerate once if next-line surprise is too high
+            if useUnsupervisedNLP && !contextLines.isEmpty {
+                let criticScore = await coherenceCritic.score(
+                    candidate: parodyLine,
+                    previousLines: contextLines,
+                    keywords: keywords
+                )
+                if verbose {
+                    print(
+                        "Coherence critic line \(index + 1): " +
+                        "coherence=\(String(format: "%.2f", criticScore.coherence)) " +
+                        "surprise=\(String(format: "%.2f", criticScore.surprise)) " +
+                        "[\(criticScore.method)]"
+                    )
+                }
+                if coherenceCritic.shouldReject(criticScore) {
+                    do {
+                        if verbose {
+                            print("Regenerating line \(index + 1) after coherence reject")
+                        }
+                        let retry = try await ollamaClient.generateParodyLine(
+                            originalLine: originalLine,
+                            syllableCount: syllableCount,
+                            keywords: keywords,
+                            previousLines: contextLines,
+                            rhymeGroup: currentRhymeGroup,
+                            rhymingLines: rhymingLines,
+                            rhymeScheme: rhymeScheme,
+                            wordSyllablePattern: wordSyllablePattern,
+                            wordSyllables: wordSyllables.map { $0.syllables },
+                            usedWords: usedWords,
+                            wordSuggestions: wordSuggestions
+                        )
+                        let retryScore = await coherenceCritic.score(
+                            candidate: retry,
+                            previousLines: contextLines,
+                            keywords: keywords
+                        )
+                        if retryScore.coherence >= criticScore.coherence {
+                            parodyLine = retry
+                        }
+                    } catch {
+                        if verbose {
+                            print("Warning: coherence retry failed for line \(index + 1)")
+                        }
+                    }
+                }
+            }
             
             // Extract words from the generated line and add to usedWords set
             let wordsInLine = extractWords(from: parodyLine)
@@ -262,34 +336,59 @@ public class ParodyGenerator {
         return words
     }
     
-    /// Get word suggestions from dictionary for each syllable position
-    /// - Parameters:
-    ///   - syllableCounts: Array of syllable counts per word position
-    ///   - theme: Theme keywords for semantic matching
-    ///   - excludeWords: Words to exclude
-    /// - Returns: Array of word suggestions per position
+    /// Get word suggestions from OED + unsupervised embedding substitution.
     private func getWordSuggestions(
-        for syllableCounts: [Int],
+        for originalLine: String,
+        syllableCounts: [Int],
         theme: [String],
         excludeWords: Set<String>
     ) -> [[(word: String, definition: String)]] {
-        guard let dict = dictionary, dict.isLoaded() else {
-            return []
+        var dictionarySuggestions: [[(word: String, definition: String)]] = []
+        if let dict = dictionary, dict.isLoaded() {
+            for syllableCount in syllableCounts {
+                dictionarySuggestions.append(
+                    dict.getWordSuggestions(
+                        syllableCount: syllableCount,
+                        theme: theme,
+                        excludeWords: excludeWords,
+                        maxResults: 8
+                    )
+                )
+            }
         }
-        
-        var suggestions: [[(word: String, definition: String)]] = []
-        
-        for syllableCount in syllableCounts {
-            let wordSuggestions = dict.getWordSuggestions(
-                syllableCount: syllableCount,
-                theme: theme,
-                excludeWords: excludeWords,
-                maxResults: 10
-            )
-            suggestions.append(wordSuggestions)
+
+        guard useUnsupervisedNLP else {
+            return dictionarySuggestions
         }
-        
-        return suggestions
+
+        let unsupervised = lexicalSubstitution.asWordSuggestions(
+            for: originalLine,
+            excludeWords: excludeWords,
+            theme: theme,
+            maxPerPosition: 6
+        )
+
+        if dictionarySuggestions.isEmpty {
+            return unsupervised
+        }
+
+        // Merge position-wise, dictionary first then embedding neighbors.
+        let count = max(dictionarySuggestions.count, unsupervised.count)
+        var merged: [[(word: String, definition: String)]] = []
+        for i in 0..<count {
+            var bucket: [(word: String, definition: String)] = []
+            var seen = Set<String>()
+            let left = i < dictionarySuggestions.count ? dictionarySuggestions[i] : []
+            let right = i < unsupervised.count ? unsupervised[i] : []
+            for item in left + right {
+                let key = item.word.lowercased()
+                if seen.insert(key).inserted {
+                    bucket.append(item)
+                }
+            }
+            merged.append(Array(bucket.prefix(12)))
+        }
+        return merged
     }
     
     /// Refine word-by-word syllable matching

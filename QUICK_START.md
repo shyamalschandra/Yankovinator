@@ -84,6 +84,16 @@ swift run benchmark \
 | `keyword-generator` | Create `keyword: definition` theme files via Ollama |
 | `benchmark` | Measure generation performance |
 
+## Unsupervised NLP (built in)
+
+Generation now uses unlabeled NaturalLanguage signals by default:
+
+- **Lexical substitution** — syllable-matched `NLEmbedding` neighbors
+- **Rhyme clustering** — phonetic + embedding clusters for scheme detection
+- **Coherence critic** — next-line surprise scoring (embedding + optional Ollama)
+
+Disable with `ParodyGenerator(..., useUnsupervisedNLP: false)` if needed.
+
 ## Documentation
 
 - [README.md](README.md) — full guide
