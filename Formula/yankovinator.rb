@@ -1,43 +1,41 @@
 # Homebrew formula for Yankovinator
-# This formula downloads pre-built binaries from GitHub Releases
-# To use this formula, place it in your Homebrew tap repository:
-# https://github.com/shyamalschandra/homebrew-yankovinator
+# Tap: https://github.com/shyamalschandra/homebrew-yankovinator
+#
+#   brew tap shyamalschandra/yankovinator
+#   brew install yankovinator
 
 class Yankovinator < Formula
   desc "Convert songs into parodies with theme-based constraints using llama on Ollama"
   homepage "https://github.com/shyamalschandra/Yankovinator"
+  url "https://github.com/shyamalschandra/Yankovinator/releases/download/v1.02/yankovinator-universal.tar.gz"
   version "1.02"
-  # Requires macOS 13.0+ for Ollama support
-  depends_on :macos => :ventura
-  
-  # Determine architecture
-  if Hardware::CPU.arm?
-    arch = "arm64"
-  else
-    arch = "x86_64"
-  end
-  
-  # Use universal binary if available, otherwise fall back to architecture-specific
-  # Update these URLs after creating a GitHub release
-  url "https://github.com/shyamalschandra/Yankovinator/releases/download/v#{version}/yankovinator-universal.tar.gz"
-  # Alternative: use architecture-specific binary
-  # url "https://github.com/shyamalschandra/Yankovinator/releases/download/v#{version}/yankovinator-#{arch}.tar.gz"
-  
-  # Calculate SHA256 after creating the release
-  # Run: shasum -a 256 yankovinator-universal.tar.gz
-  # Note: This will be updated after the GitHub release is created with proper universal binary
   sha256 "86be4e2d9beae0a4a43ebced31dcce595f335b7066e2155b9a653b502f957aba"
-  
+  license :cannot_represent
+
+  depends_on macos: :ventura
+
   def install
-    # Extract and install binaries
     bin.install "yankovinator"
     bin.install "keyword-generator"
     bin.install "benchmark" if File.exist?("benchmark")
   end
-  
+
+  def caveats
+    <<~EOS
+      Yankovinator requires a local Ollama server with the llama3.2:3b model:
+
+        brew install --cask ollama-app
+        # or: brew install ollama && ollama serve
+        ollama pull llama3.2:3b
+
+      Docs: https://github.com/shyamalschandra/Yankovinator
+      Site: https://shyamalschandra.github.io/Yankovinator/
+    EOS
+  end
+
   test do
-    system "#{bin}/yankovinator", "--help"
-    system "#{bin}/keyword-generator", "--help"
-    system "#{bin}/benchmark", "--help" if File.exist?("#{bin}/benchmark")
+    assert_match "USAGE", shell_output("#{bin}/yankovinator --help")
+    assert_match "USAGE", shell_output("#{bin}/keyword-generator --help")
+    assert_match "USAGE", shell_output("#{bin}/benchmark --help") if (bin/"benchmark").exist?
   end
 end
