@@ -112,7 +112,7 @@ public struct UnsupervisedRhymeClustering {
         weight += 0.25
 
         // Embedding neighborhood (unsupervised semantic/phonetic proxy)
-        if let embedding {
+        if let embedding, embedding.contains(a), embedding.contains(b) {
             let d = embedding.distance(between: a, and: b)
             // NLEmbedding distances are typically small for related words; clamp.
             let embScore = min(max(d / 1.5, 0.0), 1.0)

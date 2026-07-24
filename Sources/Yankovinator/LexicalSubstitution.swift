@@ -58,11 +58,13 @@ public struct LexicalSubstitutionEngine {
         var ranked: [Substitution] = []
         var seen = excludeWords.union([cleaned])
 
-        if let embedding {
-            let neighbors = embedding.neighbors(for: cleaned, maximumCount: max(40, maxResults * 6))
-            for (neighbor, distance) in neighbors {
+        if let embedding, embedding.contains(cleaned) {
+            // neighbors(for:) can crash for OOV tokens; only query in-vocabulary words.
+            let neighborNames = embedding.neighbors(for: cleaned, maximumCount: max(40, maxResults * 6))
+            for (neighbor, distance) in neighborNames {
                 let candidate = normalize(neighbor)
                 guard !candidate.isEmpty, !seen.contains(candidate) else { continue }
+                guard embedding.contains(candidate) else { continue }
                 guard distance <= maxDistance else { continue }
 
                 let syllables = syllableCounter.countSyllables(in: candidate)
@@ -147,6 +149,7 @@ public struct LexicalSubstitutionEngine {
         for themeWord in theme {
             let cleaned = normalize(themeWord)
             guard !cleaned.isEmpty else { continue }
+            guard embedding.contains(word), embedding.contains(cleaned) else { continue }
             let distance = embedding.distance(between: word, and: cleaned)
             // Smaller distance => higher affinity
             best = max(best, -distance)

@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="${1:-1.02}"
+VERSION="${1:-1.02.1}"
 TAG="v${VERSION}"
 GITHUB_USER="shyamalschandra"
 MAIN_REPO="Yankovinator"
@@ -35,14 +35,16 @@ cp "${SCRIPT_DIR}/Formula/yankovinator.rb" "${TAP_DIR}/yankovinator.rb"
 # Keep tap formula URL/sha synced to the requested release.
 python3 - <<PY
 from pathlib import Path
+import re
 path = Path("${TAP_DIR}/yankovinator.rb")
 text = path.read_text()
-text = text.replace(
-    "https://github.com/shyamalschandra/Yankovinator/releases/download/v1.02/yankovinator-universal.tar.gz",
+text = re.sub(
+    r"https://github.com/shyamalschandra/Yankovinator/releases/download/v[0-9.]+/yankovinator-universal.tar.gz",
     f"https://github.com/shyamalschandra/Yankovinator/releases/download/v${VERSION}/yankovinator-universal.tar.gz",
+    text,
+    count=1,
 )
-import re
-text = re.sub(r'sha256 "[0-9a-f]+"', f'sha256 "${SHA256}"', text, count=1)
+text = re.sub(r'sha256 "[^"]+"', f'sha256 "${SHA256}"', text, count=1)
 path.write_text(text)
 PY
 

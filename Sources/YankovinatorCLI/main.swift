@@ -86,7 +86,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
         // Trim and validate keywords file if provided
         if let keywordsFile = keywords {
             let trimmed = keywordsFile.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
+            if trimmed.isEmpty || trimmed.hasPrefix("-") {
                 throw ValidationError("Keywords file path cannot be empty. Omit --keywords if not needed.")
             }
             keywords = trimmed
@@ -95,10 +95,23 @@ struct YankovinatorCLI: AsyncParsableCommand {
         // Trim and validate output file if provided
         if let outputPath = output {
             let trimmed = outputPath.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                throw ValidationError("Output file path cannot be empty. Omit --output to print to stdout.")
+            if trimmed.isEmpty || trimmed.hasPrefix("-") {
+                throw ValidationError("""
+                Output file path cannot be empty or another flag.
+                Omit --output to print to stdout, or provide a path:
+                  yankovinator lyrics.txt --keywords themes.txt --output parody.txt
+                """)
             }
             output = trimmed
+        }
+
+        // Guard against `--model` accidentally capturing a flag like `-a`
+        if model.hasPrefix("-") {
+            throw ValidationError("""
+            Invalid model name "\(model)".
+            If you meant defaults, omit --model entirely:
+              yankovinator lyrics.txt --keywords themes.txt -a -v
+            """)
         }
     }
     

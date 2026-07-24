@@ -61,6 +61,9 @@ public class ParodyGenerator {
     ) async throws -> [String] {
         // Verify model is available before starting
         try await verifyModel()
+
+        // Avoid racing a background OED download against suggestion lookups.
+        dictionary?.waitUntilLoaded(timeoutSeconds: 2.0)
         
         // Track which lines are empty to preserve structure
         let emptyLineIndices = Set(originalLyrics.enumerated().compactMap { index, line in
@@ -742,59 +745,38 @@ public class ParodyGenerator {
     
     /// Apply capitalization and punctuation pattern from original line to generated line
     private func applyCapitalizationAndPunctuation(to generatedLine: String, from originalLine: String) -> String {
-        // Extract word tokens from both lines
+        // Collect ranges first — nested enumerateTokens on the same NLTokenizer is unsafe.
         let originalTokenizer = NLTokenizer(unit: .word)
         originalTokenizer.string = originalLine
-        
-        let generatedTokenizer = NLTokenizer(unit: .word)
-        generatedTokenizer.string = generatedLine
-        
-        // Get original words with their capitalization and following punctuation/spacing
-        var originalWords: [(word: String, isCapitalized: Bool, afterWord: String)] = []
-        
+        var originalRanges: [Range<String.Index>] = []
         originalTokenizer.enumerateTokens(in: originalLine.startIndex..<originalLine.endIndex) { tokenRange, _ in
+            originalRanges.append(tokenRange)
+            return true
+        }
+
+        var originalWords: [(word: String, isCapitalized: Bool, afterWord: String)] = []
+        for (i, tokenRange) in originalRanges.enumerated() {
             let word = String(originalLine[tokenRange])
-            
-            // Get everything after this word until the next word starts
             let afterWordEnd = tokenRange.upperBound
-            var nextWordStart = originalLine.endIndex
-            
-            // Find the start of the next word by looking ahead
-            if afterWordEnd < originalLine.endIndex {
-                // Use enumerateTokens to find the next token
-                var foundNext = false
-                originalTokenizer.enumerateTokens(in: afterWordEnd..<originalLine.endIndex) { nextTokenRange, _ in
-                    nextWordStart = nextTokenRange.lowerBound
-                    foundNext = true
-                    return false // Stop after first token
-                }
-                if !foundNext {
-                    nextWordStart = originalLine.endIndex
-                }
-            }
-            
-            // Extract everything between this word and the next (spaces, punctuation, etc.)
+            let nextWordStart = (i + 1 < originalRanges.count) ? originalRanges[i + 1].lowerBound : originalLine.endIndex
+
             var afterWord = ""
             if nextWordStart > afterWordEnd {
                 afterWord = String(originalLine[afterWordEnd..<nextWordStart])
             } else if afterWordEnd < originalLine.endIndex {
-                // This is the last word, get everything after it
                 afterWord = String(originalLine[afterWordEnd...])
             }
-            
-            // Check capitalization (first letter of the word)
+
             let firstChar = word.first { $0.isLetter }
             let isCapitalized = firstChar?.isUppercase ?? false
-            
             originalWords.append((word: word, isCapitalized: isCapitalized, afterWord: afterWord))
-            return true
         }
         
-        // Get generated words
+        let generatedTokenizer = NLTokenizer(unit: .word)
+        generatedTokenizer.string = generatedLine
         var generatedWords: [String] = []
         generatedTokenizer.enumerateTokens(in: generatedLine.startIndex..<generatedLine.endIndex) { tokenRange, _ in
-            let word = String(generatedLine[tokenRange])
-            generatedWords.append(word)
+            generatedWords.append(String(generatedLine[tokenRange]))
             return true
         }
         

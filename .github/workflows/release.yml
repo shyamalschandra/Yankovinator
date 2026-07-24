@@ -260,10 +260,10 @@ jobs:
 
             Local AI parody generator using NaturalLanguage + Ollama (`llama3.2:3b`).
 
-            ### What's new in 1.02
+            ### What's new
+            - **v1.02.1:** crash fix for OED dictionary data race during generation; safer embeddings/CLI validation
             - Unsupervised NLP: embedding lexical substitution, rhyme clustering, coherence critic
             - OED/Webster dictionary word suggestions
-            - Docs/GitHub Pages refresh + sample data (`data/example_*.txt`)
             - CLI tools: `yankovinator`, `keyword-generator`, `benchmark`
 
             ### Downloads
