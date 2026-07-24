@@ -1,107 +1,63 @@
 #!/bin/bash
-# Script to update Homebrew tap with v1.0.1 release
-# This script updates the homebrew-yankovinator-swift tap repository
+# Update the Homebrew tap for the latest Yankovinator release.
+# Usage: ./update-homebrew-tap.sh [version]
+# Example: ./update-homebrew-tap.sh 1.02
 
-set -e
+set -euo pipefail
 
-VERSION="1.0.1"
-TAP_REPO="homebrew-yankovinator-swift"
-MAIN_REPO="Yankovinator-swift"
+VERSION="${1:-1.02}"
+TAG="v${VERSION}"
 GITHUB_USER="shyamalschandra"
+MAIN_REPO="Yankovinator"
+TAP_REPO="homebrew-yankovinator"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TAP_DIR="${SCRIPT_DIR}/../${TAP_REPO}"
 
-echo "🚀 Updating Homebrew tap for v${VERSION}"
+echo "Updating Homebrew tap for ${TAG}"
 
-# Check if tap repo exists locally
-if [ ! -d "../${TAP_REPO}" ]; then
-    echo "📦 Cloning tap repository..."
-    cd ..
-    git clone "https://github.com/${GITHUB_USER}/${TAP_REPO}.git" || {
-        echo "❌ Tap repository not found. Please create it first at:"
-        echo "   https://github.com/${GITHUB_USER}/${TAP_REPO}"
-        exit 1
-    }
-    cd "${TAP_REPO}"
+if [ ! -d "${TAP_DIR}/.git" ]; then
+  git clone "https://github.com/${GITHUB_USER}/${TAP_REPO}.git" "${TAP_DIR}"
 else
-    echo "📦 Using existing tap repository..."
-    cd "../${TAP_REPO}"
-    git pull origin main
+  git -C "${TAP_DIR}" pull --ff-only origin main
 fi
 
-# Wait for release to be available
-echo "⏳ Waiting for release v${VERSION} to be available..."
-MAX_WAIT=300  # 5 minutes
-WAITED=0
-while [ $WAITED -lt $MAX_WAIT ]; do
-    if curl -sL "https://github.com/${GITHUB_USER}/${MAIN_REPO}/releases/download/v${VERSION}/yankovinator-universal.tar.gz.sha256" > /dev/null 2>&1; then
-        echo "✅ Release is available!"
-        break
-    fi
-    echo "   Waiting... (${WAITED}s/${MAX_WAIT}s)"
-    sleep 10
-    WAITED=$((WAITED + 10))
-done
-
-if [ $WAITED -ge $MAX_WAIT ]; then
-    echo "❌ Release not available after waiting. Please check GitHub Actions."
-    exit 1
+SHA_URL="https://github.com/${GITHUB_USER}/${MAIN_REPO}/releases/download/${TAG}/yankovinator-universal.tar.gz.sha256"
+SHA256="$(curl -fsSL "${SHA_URL}" | awk '{print $1}')"
+if [ -z "${SHA256}" ]; then
+  echo "Failed to fetch SHA256 from ${SHA_URL}"
+  exit 1
 fi
 
-# Download checksum
-echo "📥 Downloading SHA256 checksum..."
-SHA256=$(curl -sL "https://github.com/${GITHUB_USER}/${MAIN_REPO}/releases/download/v${VERSION}/yankovinator-universal.tar.gz.sha256" | awk '{print $1}')
+echo "SHA256: ${SHA256}"
 
-if [ -z "$SHA256" ]; then
-    echo "❌ Failed to get SHA256 checksum"
-    exit 1
+cp "${SCRIPT_DIR}/Formula/yankovinator.rb" "${TAP_DIR}/yankovinator.rb"
+
+# Keep tap formula URL/sha synced to the requested release.
+python3 - <<PY
+from pathlib import Path
+path = Path("${TAP_DIR}/yankovinator.rb")
+text = path.read_text()
+text = text.replace(
+    "https://github.com/shyamalschandra/Yankovinator/releases/download/v1.02/yankovinator-universal.tar.gz",
+    f"https://github.com/shyamalschandra/Yankovinator/releases/download/v${VERSION}/yankovinator-universal.tar.gz",
+)
+import re
+text = re.sub(r'sha256 "[0-9a-f]+"', f'sha256 "${SHA256}"', text, count=1)
+path.write_text(text)
+PY
+
+git -C "${TAP_DIR}" add yankovinator.rb
+if git -C "${TAP_DIR}" diff --cached --quiet; then
+  echo "Tap already up to date for ${TAG}"
+  exit 0
 fi
 
-echo "✅ SHA256: ${SHA256}"
+git -C "${TAP_DIR}" commit -m "Update Yankovinator formula to ${TAG}
 
-# Update formula
-FORMULA_FILE="yankovinator-swift.rb"
-if [ ! -f "$FORMULA_FILE" ]; then
-    echo "📝 Creating formula file..."
-    cp "../${MAIN_REPO}/Formula/yankovinator-swift.rb" "$FORMULA_FILE"
-fi
+Release: https://github.com/${GITHUB_USER}/${MAIN_REPO}/releases/tag/${TAG}"
+git -C "${TAP_DIR}" push origin HEAD
 
-# Update version and SHA256
-echo "📝 Updating formula..."
-sed -i.bak "s/version \"[^\"]*\"/version \"${VERSION}\"/" "$FORMULA_FILE"
-sed -i.bak "s/sha256 \"[^\"]*\"/sha256 \"${SHA256}\"/" "$FORMULA_FILE"
-rm -f "${FORMULA_FILE}.bak"
-
-# Verify changes
-echo "🔍 Verifying formula..."
-if ! grep -q "version \"${VERSION}\"" "$FORMULA_FILE"; then
-    echo "❌ Version update failed"
-    exit 1
-fi
-
-if ! grep -q "sha256 \"${SHA256}\"" "$FORMULA_FILE"; then
-    echo "❌ SHA256 update failed"
-    exit 1
-fi
-
-echo "✅ Formula updated successfully!"
-
-# Commit and push
-echo "📤 Committing and pushing changes..."
-git add "$FORMULA_FILE"
-git commit -m "Update to v${VERSION}
-
-- Updated version to ${VERSION}
-- Updated SHA256 checksum
-- Release: https://github.com/${GITHUB_USER}/${MAIN_REPO}/releases/tag/v${VERSION}" || {
-    echo "⚠️  No changes to commit (formula may already be up to date)"
-    exit 0
-}
-
-git push origin main
-
-echo ""
-echo "✅ Homebrew tap updated successfully!"
-echo ""
-echo "Users can now install with:"
-echo "  brew tap ${GITHUB_USER}/yankovinator-swift"
-echo "  brew install yankovinator-swift"
-echo ""
+echo
+echo "Tap updated. Install with:"
+echo "  brew tap ${GITHUB_USER}/yankovinator"
+echo "  brew install yankovinator"
