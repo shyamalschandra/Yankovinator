@@ -7,8 +7,8 @@
 class Yankovinator < Formula
   desc "Convert songs into parodies with theme-based constraints using llama on Ollama"
   homepage "https://github.com/shyamalschandra/Yankovinator"
-  url "https://github.com/shyamalschandra/Yankovinator/releases/download/v1.03/yankovinator-universal.tar.gz"
-  sha256 "0813ca21b5267d269de129231c1bc2919749bc74abb2d874c9e146509e349c0a"
+  url "https://github.com/shyamalschandra/Yankovinator/releases/download/v1.03.1/yankovinator-universal.tar.gz"
+  sha256 "REPLACE_AFTER_RELEASE"
   license :cannot_represent
 
   depends_on macos: :ventura
@@ -30,6 +30,11 @@ class Yankovinator < Formula
       Parallel batch against cloud Ollama:
         yankovinator --input-dir ./songs --output-dir ./out \\
           --keywords themes.txt --ollama-url https://ollama.example.com --workers 10
+
+      Combinatorial (every song × every theme):
+        yankovinator --input-dir ./songs --themes-dir ./themes \\
+          --output-dir ./out --workers 10
+        # out/<theme>/<song>.parody.txt  (add --force if songs×themes > 100)
 
       Docs: https://github.com/shyamalschandra/Yankovinator
       Site: https://shyamalschandra.github.io/Yankovinator/

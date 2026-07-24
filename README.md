@@ -24,6 +24,7 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 - NaturalLanguage framework integration
 - Local or cloud Ollama integration (`llama3.2:3b` by default; any `--ollama-url`)
 - Parallel workers for batch jobs (`--workers 10` / `--jobs 10`) against cloud Ollama
+- Combinatorial batch: every song × every theme via `--input-dir` + `--themes-dir`
 - CLI tools: `yankovinator`, `keyword-generator`, `benchmark`
 - XCTest suite (unit + Ollama integration tests)
 - LaTeX/Beamer docs and GitHub Pages site
@@ -41,11 +42,11 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.03**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.03.1**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.03/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.03.1/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/
@@ -133,8 +134,10 @@ swift run yankovinator <lyrics-file> [options]
 - `--model, -m <name>`: Ollama model (default: `llama3.2:3b`)
 - `--output, -o <file>`: Output path for single-file mode (default: stdout)
 - `--input-dir <dir>`: Directory of `.txt` lyrics files (batch / parallel jobs)
-- `--output-dir <dir>`: Output directory for batch mode (writes `<stem>.parody.txt`)
+- `--themes-dir <dir>`: Directory of theme keyword `.txt` files; with `--input-dir` runs **every song × every theme**
+- `--output-dir <dir>`: Output directory for batch mode (`<song>.parody.txt`, or `<theme>/<song>.parody.txt` for cross-product)
 - `--workers, --jobs <n>`: Max parallel jobs (1–32; default 1; use `10` for cloud batch)
+- `--force`: Allow songs×themes products larger than 100 jobs
 - `--analyze, -a`: Show syllable analysis
 - `--verbose, -v`: Verbose output
 
@@ -164,6 +167,24 @@ swift run yankovinator --input-dir ./songs --output-dir ./out \
   --ollama-url https://ollama.example.com \
   --workers 10 \
   --verbose
+```
+
+**Combinatorial batch (every song × every theme):**
+
+```bash
+mkdir -p songs themes out
+cp data/example_lyrics.txt songs/song1.txt
+cp data/example_lyrics.txt songs/song2.txt
+cp data/example_keywords.txt themes/space.txt
+# add more theme keyword files under themes/
+
+swift run yankovinator --input-dir ./songs --themes-dir ./themes \
+  --output-dir ./out \
+  --ollama-url https://ollama.example.com \
+  --workers 10 \
+  --verbose
+# Writes: out/<theme>/<song>.parody.txt
+# If songs×themes > 100, add --force
 ```
 
 ### Benchmark

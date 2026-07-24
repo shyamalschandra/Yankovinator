@@ -17,6 +17,9 @@ public enum ParallelJobRunner {
     /// Hard upper bound to avoid overwhelming remote hosts.
     public static let maxWorkers = 32
 
+    /// Cross-product job counts above this require an explicit `--force` on the CLI.
+    public static let crossProductForceThreshold = 100
+
     /// Clamp a requested worker count into `[1, maxWorkers]`.
     public static func clampWorkers(_ requested: Int) -> Int {
         max(1, min(requested, maxWorkers))
@@ -97,8 +100,10 @@ public enum ParallelJobRunner {
 public enum ParallelJobError: Error, CustomStringConvertible, Sendable {
     case invalidWorkerCount(Int, max: Int)
     case emptyInputDirectory(String)
+    case emptyThemesDirectory(String)
     case missingOutputDirectory
     case cannotCreateOutputDirectory(String)
+    case crossProductRequiresForce(songCount: Int, themeCount: Int, total: Int, threshold: Int)
 
     public var description: String {
         switch self {
@@ -106,10 +111,17 @@ public enum ParallelJobError: Error, CustomStringConvertible, Sendable {
             return "Workers must be between 1 and \(max) (got \(requested)). For cloud Ollama batch jobs, try --workers \(ParallelJobRunner.recommendedCloudWorkers)."
         case .emptyInputDirectory(let path):
             return "No .txt lyrics files found in input directory: \(path)"
+        case .emptyThemesDirectory(let path):
+            return "No .txt theme/keyword files found in themes directory: \(path)"
         case .missingOutputDirectory:
-            return "--output-dir is required when using --input-dir for parallel batch jobs."
+            return "--output-dir is required for batch jobs (--input-dir and/or --themes-dir)."
         case .cannotCreateOutputDirectory(let path):
             return "Could not create output directory: \(path)"
+        case .crossProductRequiresForce(let songCount, let themeCount, let total, let threshold):
+            return """
+            Cross-product would create \(total) jobs (\(songCount) songs × \(themeCount) themes), which exceeds the safety threshold of \(threshold).
+            Re-run with --force if you really want that combinatorial batch.
+            """
         }
     }
 }
@@ -117,12 +129,26 @@ public enum ParallelJobError: Error, CustomStringConvertible, Sendable {
 /// One lyrics → parody batch job for parallel processing.
 public struct ParodyBatchJob: Sendable {
     public let id: String
+    public let songId: String
+    public let themeId: String?
     public let lyricsPath: String
+    /// Theme keywords file for this job. `nil` means use the shared CLI `--keywords` / default theme.
+    public let keywordsPath: String?
     public let outputPath: String
 
-    public init(id: String, lyricsPath: String, outputPath: String) {
+    public init(
+        id: String,
+        songId: String,
+        themeId: String? = nil,
+        lyricsPath: String,
+        keywordsPath: String? = nil,
+        outputPath: String
+    ) {
         self.id = id
+        self.songId = songId
+        self.themeId = themeId
         self.lyricsPath = lyricsPath
+        self.keywordsPath = keywordsPath
         self.outputPath = outputPath
     }
 }
@@ -136,43 +162,161 @@ public actor JobLog {
     }
 }
 
-/// Discovers parody batch jobs from a directory of lyrics files.
+/// Discovers parody batch jobs from lyrics (and optional theme) directories.
 public enum ParodyBatchJobBuilder {
-    /// Build jobs from `*.txt` files in `inputDir`, writing to `outputDir`.
+    /// Build jobs from `*.txt` lyrics in `inputDir` with one shared theme.
     ///
-    /// Output files are named `<stem>.parody.txt`.
+    /// Output files are named `<song>.parody.txt`.
     public static func jobs(
         inputDir: String,
         outputDir: String
     ) throws -> [ParodyBatchJob] {
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: inputDir, isDirectory: &isDir), isDir.boolValue else {
-            throw ParallelJobError.emptyInputDirectory(inputDir)
+        try ensureDirectory(outputDir)
+        let songs = try listTxtFiles(in: inputDir, emptyError: .emptyInputDirectory(inputDir))
+
+        return songs.map { song in
+            let outputPath = (outputDir as NSString).appendingPathComponent("\(song.stem).parody.txt")
+            return ParodyBatchJob(
+                id: song.stem,
+                songId: song.stem,
+                themeId: nil,
+                lyricsPath: song.path,
+                keywordsPath: nil,
+                outputPath: outputPath
+            )
+        }
+    }
+
+    /// Build the cartesian product of lyrics files × theme keyword files.
+    ///
+    /// Outputs are nested as `<outputDir>/<theme>/<song>.parody.txt`.
+    ///
+    /// - Parameters:
+    ///   - inputDir: Directory of song `.txt` files.
+    ///   - themesDir: Directory of theme keyword `.txt` files (`keyword: definition`).
+    ///   - outputDir: Root output directory.
+    ///   - force: Required when `songs × themes` exceeds `ParallelJobRunner.crossProductForceThreshold`.
+    public static func crossProductJobs(
+        inputDir: String,
+        themesDir: String,
+        outputDir: String,
+        force: Bool = false
+    ) throws -> [ParodyBatchJob] {
+        try ensureDirectory(outputDir)
+        let songs = try listTxtFiles(in: inputDir, emptyError: .emptyInputDirectory(inputDir))
+        let themes = try listTxtFiles(in: themesDir, emptyError: .emptyThemesDirectory(themesDir))
+
+        let total = songs.count * themes.count
+        if total > ParallelJobRunner.crossProductForceThreshold && !force {
+            throw ParallelJobError.crossProductRequiresForce(
+                songCount: songs.count,
+                themeCount: themes.count,
+                total: total,
+                threshold: ParallelJobRunner.crossProductForceThreshold
+            )
         }
 
-        if !fm.fileExists(atPath: outputDir) {
-            do {
-                try fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
-            } catch {
-                throw ParallelJobError.cannotCreateOutputDirectory(outputDir)
+        var jobs: [ParodyBatchJob] = []
+        jobs.reserveCapacity(total)
+
+        for theme in themes {
+            let themeOutDir = (outputDir as NSString).appendingPathComponent(theme.stem)
+            try ensureDirectory(themeOutDir)
+
+            for song in songs {
+                let outputPath = (themeOutDir as NSString).appendingPathComponent("\(song.stem).parody.txt")
+                jobs.append(
+                    ParodyBatchJob(
+                        id: "\(song.stem)×\(theme.stem)",
+                        songId: song.stem,
+                        themeId: theme.stem,
+                        lyricsPath: song.path,
+                        keywordsPath: theme.path,
+                        outputPath: outputPath
+                    )
+                )
             }
         }
 
-        let contents = try fm.contentsOfDirectory(atPath: inputDir)
-        let lyricsFiles = contents
-            .filter { $0.lowercased().hasSuffix(".txt") && !$0.hasPrefix(".") }
-            .sorted()
+        return jobs
+    }
 
-        guard !lyricsFiles.isEmpty else {
-            throw ParallelJobError.emptyInputDirectory(inputDir)
+    /// Build jobs for one lyrics file against every theme in `themesDir`.
+    public static func jobs(
+        lyricsPath: String,
+        themesDir: String,
+        outputDir: String,
+        force: Bool = false
+    ) throws -> [ParodyBatchJob] {
+        try ensureDirectory(outputDir)
+        let themes = try listTxtFiles(in: themesDir, emptyError: .emptyThemesDirectory(themesDir))
+        let songStem = ((lyricsPath as NSString).lastPathComponent as NSString).deletingPathExtension
+
+        let total = themes.count
+        if total > ParallelJobRunner.crossProductForceThreshold && !force {
+            throw ParallelJobError.crossProductRequiresForce(
+                songCount: 1,
+                themeCount: themes.count,
+                total: total,
+                threshold: ParallelJobRunner.crossProductForceThreshold
+            )
         }
 
-        return lyricsFiles.map { filename in
-            let stem = (filename as NSString).deletingPathExtension
-            let lyricsPath = (inputDir as NSString).appendingPathComponent(filename)
-            let outputPath = (outputDir as NSString).appendingPathComponent("\(stem).parody.txt")
-            return ParodyBatchJob(id: stem, lyricsPath: lyricsPath, outputPath: outputPath)
+        var jobs: [ParodyBatchJob] = []
+        jobs.reserveCapacity(themes.count)
+        for theme in themes {
+            let themeOutDir = (outputDir as NSString).appendingPathComponent(theme.stem)
+            try ensureDirectory(themeOutDir)
+            let outputPath = (themeOutDir as NSString).appendingPathComponent("\(songStem).parody.txt")
+            jobs.append(
+                ParodyBatchJob(
+                    id: "\(songStem)×\(theme.stem)",
+                    songId: songStem,
+                    themeId: theme.stem,
+                    lyricsPath: lyricsPath,
+                    keywordsPath: theme.path,
+                    outputPath: outputPath
+                )
+            )
+        }
+        return jobs
+    }
+
+    // MARK: - Helpers
+
+    private struct TxtFile {
+        let stem: String
+        let path: String
+    }
+
+    private static func listTxtFiles(in directory: String, emptyError: ParallelJobError) throws -> [TxtFile] {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: directory, isDirectory: &isDir), isDir.boolValue else {
+            throw emptyError
+        }
+
+        let contents = try fm.contentsOfDirectory(atPath: directory)
+        let files = contents
+            .filter { $0.lowercased().hasSuffix(".txt") && !$0.hasPrefix(".") }
+            .sorted()
+            .map { filename -> TxtFile in
+                let stem = (filename as NSString).deletingPathExtension
+                let path = (directory as NSString).appendingPathComponent(filename)
+                return TxtFile(stem: stem, path: path)
+            }
+
+        guard !files.isEmpty else { throw emptyError }
+        return files
+    }
+
+    private static func ensureDirectory(_ path: String) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: path) { return }
+        do {
+            try fm.createDirectory(atPath: path, withIntermediateDirectories: true)
+        } catch {
+            throw ParallelJobError.cannotCreateOutputDirectory(path)
         }
     }
 }

@@ -18,10 +18,16 @@ struct YankovinatorCLI: AsyncParsableCommand {
         Single-file example:
           swift run yankovinator lyrics.txt --keywords themes.txt --output parody.txt
 
-        Parallel batch against cloud Ollama (up to 10 workers):
+        Parallel batch (one theme, many songs):
           swift run yankovinator --input-dir ./songs --output-dir ./out \\
             --keywords themes.txt --ollama-url https://ollama.example.com \\
             --workers 10 --verbose
+
+        Combinatorial batch (every song × every theme):
+          swift run yankovinator --input-dir ./songs --themes-dir ./themes \\
+            --output-dir ./out --workers 10 --verbose
+          # Outputs: out/<theme>/<song>.parody.txt
+          # If songs×themes > 100, add --force
 
         Note: If using line breaks, use backslashes:
           swift run yankovinator lyrics.txt \\
@@ -48,7 +54,10 @@ struct YankovinatorCLI: AsyncParsableCommand {
     @Option(name: .long, help: "Directory of .txt lyrics files to process as parallel jobs")
     var inputDir: String?
 
-    @Option(name: .long, help: "Directory for batch parody outputs (required with --input-dir)")
+    @Option(name: .long, help: "Directory of .txt theme/keyword files; with --input-dir builds songs × themes jobs")
+    var themesDir: String?
+
+    @Option(name: .long, help: "Directory for batch parody outputs (required for batch / cross-product modes)")
     var outputDir: String?
 
     @Option(
@@ -56,6 +65,9 @@ struct YankovinatorCLI: AsyncParsableCommand {
         help: "Max parallel Ollama jobs (1-32; default 1; use 10 for cloud batch)"
     )
     var workers: Int = 1
+
+    @Flag(name: .long, help: "Allow songs×themes cross-products larger than 100 jobs")
+    var force: Bool = false
 
     @Flag(name: .shortAndLong, help: "Show syllable analysis")
     var analyze: Bool = false
@@ -91,6 +103,14 @@ struct YankovinatorCLI: AsyncParsableCommand {
             inputDir = trimmed
         }
 
+        if let dir = themesDir {
+            let trimmed = dir.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty || trimmed.hasPrefix("-") {
+                throw ValidationError("--themes-dir cannot be empty.")
+            }
+            themesDir = trimmed
+        }
+
         if let dir = outputDir {
             let trimmed = dir.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty || trimmed.hasPrefix("-") {
@@ -100,27 +120,39 @@ struct YankovinatorCLI: AsyncParsableCommand {
         }
 
         let hasFile = lyricsFile != nil
-        let hasDir = inputDir != nil
+        let hasSongsDir = inputDir != nil
+        let hasThemesDir = themesDir != nil
 
-        guard hasFile || hasDir else {
+        guard hasFile || hasSongsDir else {
             throw ValidationError("""
             Provide a lyrics file or --input-dir for batch jobs.
 
             Single file:
               yankovinator lyrics.txt --keywords themes.txt --output parody.txt
 
-            Parallel batch (cloud Ollama):
-              yankovinator --input-dir ./songs --output-dir ./out \\
-                --keywords themes.txt --ollama-url https://ollama.example.com --workers 10
+            Many songs, one theme:
+              yankovinator --input-dir ./songs --output-dir ./out --keywords themes.txt --workers 10
+
+            Every song × every theme:
+              yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out --workers 10
             """)
         }
 
-        if hasFile && hasDir {
+        if hasFile && hasSongsDir {
             throw ValidationError("Use either a lyrics file or --input-dir, not both.")
         }
 
-        if hasDir && outputDir == nil {
+        if hasThemesDir && keywords != nil {
+            throw ValidationError("Use either --keywords or --themes-dir, not both.")
+        }
+
+        let needsOutputDir = hasSongsDir || (hasFile && hasThemesDir)
+        if needsOutputDir && outputDir == nil {
             throw ValidationError(ParallelJobError.missingOutputDirectory.description)
+        }
+
+        if hasThemesDir && !hasSongsDir && !hasFile {
+            throw ValidationError("--themes-dir requires a lyrics file or --input-dir.")
         }
 
         do {
@@ -179,26 +211,54 @@ struct YankovinatorCLI: AsyncParsableCommand {
             print("")
         }
 
-        let keywordsDict = try loadKeywords()
         let generator = ParodyGenerator(ollamaBaseURL: ollamaURL, ollamaModel: model)
         try await ensureOllamaReady(generator)
 
-        if let inputDir, let outputDir {
-            try await runBatch(
-                inputDir: inputDir,
-                outputDir: outputDir,
-                keywordsDict: keywordsDict
-            )
+        if let inputDir, let outputDir, let themesDir {
+            let jobs = try buildJobs {
+                try ParodyBatchJobBuilder.crossProductJobs(
+                    inputDir: inputDir,
+                    themesDir: themesDir,
+                    outputDir: outputDir,
+                    force: force
+                )
+            }
+            try await runJobs(jobs, sharedKeywords: nil, label: "songs × themes")
+        } else if let inputDir, let outputDir {
+            let shared = try loadKeywords()
+            let jobs = try buildJobs {
+                try ParodyBatchJobBuilder.jobs(inputDir: inputDir, outputDir: outputDir)
+            }
+            try await runJobs(jobs, sharedKeywords: shared, label: "songs (shared theme)")
+        } else if let lyricsFile, let themesDir, let outputDir {
+            let jobs = try buildJobs {
+                try ParodyBatchJobBuilder.jobs(
+                    lyricsPath: lyricsFile,
+                    themesDir: themesDir,
+                    outputDir: outputDir,
+                    force: force
+                )
+            }
+            try await runJobs(jobs, sharedKeywords: nil, label: "one song × themes")
         } else if let lyricsFile {
             if workers > 1 && verbose {
-                print("Note: --workers applies to batch mode (--input-dir). Running a single job.")
+                print("Note: --workers applies to batch / cross-product modes. Running a single job.")
                 print("")
             }
+            let keywordsDict = try loadKeywords()
             try await runSingleFile(lyricsFile: lyricsFile, keywordsDict: keywordsDict, generator: generator)
         }
     }
 
     // MARK: - Modes
+
+    private func buildJobs(_ builder: () throws -> [ParodyBatchJob]) throws -> [ParodyBatchJob] {
+        do {
+            return try builder()
+        } catch let error as ParallelJobError {
+            throw ValidationError(error.description)
+        }
+    }
 
     private func runSingleFile(
         lyricsFile: String,
@@ -242,24 +302,19 @@ struct YankovinatorCLI: AsyncParsableCommand {
         }
     }
 
-    private func runBatch(
-        inputDir: String,
-        outputDir: String,
-        keywordsDict: [String: String]
+    private func runJobs(
+        _ jobs: [ParodyBatchJob],
+        sharedKeywords: [String: String]?,
+        label: String
     ) async throws {
-        let jobs: [ParodyBatchJob]
-        do {
-            jobs = try ParodyBatchJobBuilder.jobs(inputDir: inputDir, outputDir: outputDir)
-        } catch let error as ParallelJobError {
-            throw ValidationError(error.description)
-        }
-
         if verbose {
-            print("Batch mode: \(jobs.count) job(s), up to \(workers) parallel worker(s)")
-            print("Input:  \(inputDir)")
-            print("Output: \(outputDir)")
-            for job in jobs {
-                print("  • \(job.id) → \(job.outputPath)")
+            print("Batch mode (\(label)): \(jobs.count) job(s), up to \(workers) parallel worker(s)")
+            for job in jobs.prefix(20) {
+                let themeNote = job.themeId.map { " theme=\($0)" } ?? ""
+                print("  • \(job.id)\(themeNote) → \(job.outputPath)")
+            }
+            if jobs.count > 20 {
+                print("  … and \(jobs.count - 20) more")
             }
             print("")
         }
@@ -269,6 +324,8 @@ struct YankovinatorCLI: AsyncParsableCommand {
         let model = self.model
         let analyze = self.analyze
         let verbose = self.verbose
+        let defaultKeywords = sharedKeywords
+            ?? ["parody": "humorous imitation", "creative": "original and imaginative"]
 
         let outcomes: [(id: String, outputPath: String)] = try await ParallelJobRunner.map(
             items: jobs,
@@ -280,13 +337,24 @@ struct YankovinatorCLI: AsyncParsableCommand {
             }
         ) { job in
             let lyrics = try Self.readLyricsStatic(from: job.lyricsPath)
+            let keywordsDict: [String: String]
+            if let keywordsPath = job.keywordsPath {
+                keywordsDict = try Self.loadKeywordsFileStatic(
+                    path: keywordsPath,
+                    ollamaURL: ollamaURL,
+                    model: model
+                )
+            } else {
+                keywordsDict = defaultKeywords
+            }
+
             if analyze {
                 await log.printLine("[\(job.id)] syllable analysis (\(lyrics.filter { !$0.isEmpty }.count) non-empty lines)")
             }
 
             let generator = ParodyGenerator(ollamaBaseURL: ollamaURL, ollamaModel: model)
             if verbose {
-                await log.printLine("[\(job.id)] generating…")
+                await log.printLine("[\(job.id)] generating (\(keywordsDict.count) keywords)…")
             }
 
             let parodyLines = try await generator.generateParody(
@@ -311,31 +379,25 @@ struct YankovinatorCLI: AsyncParsableCommand {
             return (id: job.id, outputPath: job.outputPath)
         }
 
-        print("Completed \(outcomes.count) parallel job(s) with \(workers) worker(s).")
-        for outcome in outcomes {
+        print("Completed \(outcomes.count) parallel job(s) with \(workers) worker(s) (\(label)).")
+        for outcome in outcomes.prefix(50) {
             print("  \(outcome.id): \(outcome.outputPath)")
+        }
+        if outcomes.count > 50 {
+            print("  … and \(outcomes.count - 50) more")
         }
     }
 
     // MARK: - Shared helpers
 
     private func loadKeywords() throws -> [String: String] {
-        let extractor = ParodyGenerator(ollamaBaseURL: ollamaURL, ollamaModel: model)
-
         if let keywordsFile = keywords {
-            guard let keywordsContent = try? String(contentsOfFile: keywordsFile, encoding: .utf8) else {
-                throw ValidationError("Could not read keywords file: \(keywordsFile)")
-            }
-
-            let keywordsDict = extractor.extractKeywords(from: keywordsContent)
-            if verbose {
-                print("Loaded \(keywordsDict.count) keywords:")
-                for (key, value) in keywordsDict {
-                    print("  \(key): \(value)")
-                }
-                print("")
-            }
-            return keywordsDict
+            return try Self.loadKeywordsFileStatic(
+                path: keywordsFile,
+                ollamaURL: ollamaURL,
+                model: model,
+                verbose: verbose
+            )
         }
 
         if verbose {
@@ -343,6 +405,28 @@ struct YankovinatorCLI: AsyncParsableCommand {
             print("")
         }
         return ["parody": "humorous imitation", "creative": "original and imaginative"]
+    }
+
+    private static func loadKeywordsFileStatic(
+        path: String,
+        ollamaURL: String,
+        model: String,
+        verbose: Bool = false
+    ) throws -> [String: String] {
+        guard let keywordsContent = try? String(contentsOfFile: path, encoding: .utf8) else {
+            throw ValidationError("Could not read keywords file: \(path)")
+        }
+
+        let extractor = ParodyGenerator(ollamaBaseURL: ollamaURL, ollamaModel: model)
+        let keywordsDict = extractor.extractKeywords(from: keywordsContent)
+        if verbose {
+            print("Loaded \(keywordsDict.count) keywords from \(path):")
+            for (key, value) in keywordsDict {
+                print("  \(key): \(value)")
+            }
+            print("")
+        }
+        return keywordsDict
     }
 
     private func ensureOllamaReady(_ generator: ParodyGenerator) async throws {

@@ -261,6 +261,7 @@ jobs:
             Local AI parody generator using NaturalLanguage + Ollama (`llama3.2:3b`).
 
             ### What's new
+            - **v1.03.1:** combinatorial batch — `--themes-dir` × `--input-dir` (every song × every theme); `--force` above 100 jobs
             - **v1.03:** parallel workers for cloud Ollama (`--workers 10` / `--jobs`); batch mode via `--input-dir` + `--output-dir`
             - **v1.02.1:** crash fix for OED dictionary data race during generation; safer embeddings/CLI validation
             - Unsupervised NLP: embedding lexical substitution, rhyme clustering, coherence critic

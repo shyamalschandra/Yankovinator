@@ -90,7 +90,19 @@ swift run yankovinator --input-dir ./songs --output-dir ./out \
   --verbose
 ```
 
-`--workers` / `--jobs` caps concurrent song jobs (1–32). Point `--ollama-url` at any reachable Ollama host.
+### Combinatorial batch (songs × themes)
+
+```bash
+mkdir -p songs themes out
+cp data/example_lyrics.txt songs/a.txt
+cp data/example_lyrics.txt songs/b.txt
+cp data/example_keywords.txt themes/space.txt
+
+swift run yankovinator --input-dir ./songs --themes-dir ./themes \
+  --output-dir ./out --workers 10 --verbose
+```
+
+Outputs land at `out/<theme>/<song>.parody.txt`. Job count is `songs × themes`. Above 100 jobs, pass `--force`. `--workers` / `--jobs` caps concurrency (1–32).
 
 ## Tools
 

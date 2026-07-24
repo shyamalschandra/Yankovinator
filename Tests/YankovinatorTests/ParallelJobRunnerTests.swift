@@ -100,4 +100,93 @@ final class ParallelJobRunnerTests: XCTestCase {
             try ParodyBatchJobBuilder.jobs(inputDir: temp.path, outputDir: temp.appendingPathComponent("out").path)
         )
     }
+
+    func testCrossProductJobsSongsTimesThemes() throws {
+        let fm = FileManager.default
+        let temp = fm.temporaryDirectory.appendingPathComponent("yankovinator-cross-\(UUID().uuidString)")
+        let songs = temp.appendingPathComponent("songs")
+        let themes = temp.appendingPathComponent("themes")
+        let output = temp.appendingPathComponent("out")
+        try fm.createDirectory(at: songs, withIntermediateDirectories: true)
+        try fm.createDirectory(at: themes, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: temp) }
+
+        try "lyric a\n".write(to: songs.appendingPathComponent("stay.txt"), atomically: true, encoding: .utf8)
+        try "lyric b\n".write(to: songs.appendingPathComponent("hello.txt"), atomically: true, encoding: .utf8)
+        try "space: cosmos\n".write(to: themes.appendingPathComponent("space.txt"), atomically: true, encoding: .utf8)
+        try "food: cuisine\n".write(to: themes.appendingPathComponent("food.txt"), atomically: true, encoding: .utf8)
+        try "pets: animals\n".write(to: themes.appendingPathComponent("pets.txt"), atomically: true, encoding: .utf8)
+
+        let jobs = try ParodyBatchJobBuilder.crossProductJobs(
+            inputDir: songs.path,
+            themesDir: themes.path,
+            outputDir: output.path
+        )
+
+        XCTAssertEqual(jobs.count, 6) // 2 songs × 3 themes
+        XCTAssertEqual(Set(jobs.map(\.songId)), ["hello", "stay"])
+        XCTAssertEqual(Set(jobs.compactMap(\.themeId)), ["food", "pets", "space"])
+        XCTAssertTrue(jobs.allSatisfy { $0.keywordsPath != nil })
+        XCTAssertTrue(jobs.contains { $0.outputPath.hasSuffix("/space/stay.parody.txt") })
+        XCTAssertTrue(jobs.contains { $0.outputPath.hasSuffix("/food/hello.parody.txt") })
+    }
+
+    func testCrossProductRequiresForceAboveThreshold() throws {
+        let fm = FileManager.default
+        let temp = fm.temporaryDirectory.appendingPathComponent("yankovinator-force-\(UUID().uuidString)")
+        let songs = temp.appendingPathComponent("songs")
+        let themes = temp.appendingPathComponent("themes")
+        let output = temp.appendingPathComponent("out")
+        try fm.createDirectory(at: songs, withIntermediateDirectories: true)
+        try fm.createDirectory(at: themes, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: temp) }
+
+        // 10 × 11 = 110 > 100 threshold
+        for i in 0..<10 {
+            try "song \(i)\n".write(to: songs.appendingPathComponent("s\(i).txt"), atomically: true, encoding: .utf8)
+        }
+        for i in 0..<11 {
+            try "k\(i): d\(i)\n".write(to: themes.appendingPathComponent("t\(i).txt"), atomically: true, encoding: .utf8)
+        }
+
+        XCTAssertThrowsError(
+            try ParodyBatchJobBuilder.crossProductJobs(
+                inputDir: songs.path,
+                themesDir: themes.path,
+                outputDir: output.path,
+                force: false
+            )
+        )
+
+        let forced = try ParodyBatchJobBuilder.crossProductJobs(
+            inputDir: songs.path,
+            themesDir: themes.path,
+            outputDir: output.path,
+            force: true
+        )
+        XCTAssertEqual(forced.count, 110)
+    }
+
+    func testOneSongTimesThemes() throws {
+        let fm = FileManager.default
+        let temp = fm.temporaryDirectory.appendingPathComponent("yankovinator-one-\(UUID().uuidString)")
+        let themes = temp.appendingPathComponent("themes")
+        let output = temp.appendingPathComponent("out")
+        try fm.createDirectory(at: themes, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: temp) }
+
+        let lyrics = temp.appendingPathComponent("anthem.txt")
+        try "line\n".write(to: lyrics, atomically: true, encoding: .utf8)
+        try "a: one\n".write(to: themes.appendingPathComponent("alpha.txt"), atomically: true, encoding: .utf8)
+        try "b: two\n".write(to: themes.appendingPathComponent("beta.txt"), atomically: true, encoding: .utf8)
+
+        let jobs = try ParodyBatchJobBuilder.jobs(
+            lyricsPath: lyrics.path,
+            themesDir: themes.path,
+            outputDir: output.path
+        )
+        XCTAssertEqual(jobs.count, 2)
+        XCTAssertEqual(Set(jobs.map(\.songId)), ["anthem"])
+        XCTAssertEqual(Set(jobs.compactMap(\.themeId)), ["alpha", "beta"])
+    }
 }
