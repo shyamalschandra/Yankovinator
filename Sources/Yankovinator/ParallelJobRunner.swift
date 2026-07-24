@@ -17,7 +17,7 @@ public enum ParallelJobRunner {
     /// Hard upper bound to avoid overwhelming remote hosts.
     public static let maxWorkers = 32
 
-    /// Cross-product job counts above this require an explicit `--force` on the CLI.
+    /// Effective generation counts (songs × themes × candidates) above this require `--force`.
     public static let crossProductForceThreshold = 100
 
     /// Clamp a requested worker count into `[1, maxWorkers]`.
@@ -99,16 +99,20 @@ public enum ParallelJobRunner {
 /// Errors from parallel job configuration / discovery.
 public enum ParallelJobError: Error, CustomStringConvertible, Sendable {
     case invalidWorkerCount(Int, max: Int)
+    case invalidCandidateCount(Int, max: Int)
     case emptyInputDirectory(String)
     case emptyThemesDirectory(String)
     case missingOutputDirectory
     case cannotCreateOutputDirectory(String)
-    case crossProductRequiresForce(songCount: Int, themeCount: Int, total: Int, threshold: Int)
+    case crossProductRequiresForce(songCount: Int, themeCount: Int, candidates: Int, total: Int, threshold: Int)
+    case noCandidatesProduced
 
     public var description: String {
         switch self {
         case .invalidWorkerCount(let requested, let max):
             return "Workers must be between 1 and \(max) (got \(requested)). For cloud Ollama batch jobs, try --workers \(ParallelJobRunner.recommendedCloudWorkers)."
+        case .invalidCandidateCount(let requested, let max):
+            return "Candidates must be between 1 and \(max) (got \(requested)). For combinatorial ranking, try --candidates \(CandidateParodyGenerator.recommendedCandidates)."
         case .emptyInputDirectory(let path):
             return "No .txt lyrics files found in input directory: \(path)"
         case .emptyThemesDirectory(let path):
@@ -117,11 +121,13 @@ public enum ParallelJobError: Error, CustomStringConvertible, Sendable {
             return "--output-dir is required for batch jobs (--input-dir and/or --themes-dir)."
         case .cannotCreateOutputDirectory(let path):
             return "Could not create output directory: \(path)"
-        case .crossProductRequiresForce(let songCount, let themeCount, let total, let threshold):
+        case .crossProductRequiresForce(let songCount, let themeCount, let candidates, let total, let threshold):
             return """
-            Cross-product would create \(total) jobs (\(songCount) songs × \(themeCount) themes), which exceeds the safety threshold of \(threshold).
-            Re-run with --force if you really want that combinatorial batch.
+            Combinatorial batch would create \(total) generations (\(songCount) songs × \(themeCount) themes × \(candidates) candidates), which exceeds the safety threshold of \(threshold).
+            Re-run with --force if you really want that explosion.
             """
+        case .noCandidatesProduced:
+            return "No parody candidates were produced."
         }
     }
 }
@@ -211,6 +217,7 @@ public enum ParodyBatchJobBuilder {
             throw ParallelJobError.crossProductRequiresForce(
                 songCount: songs.count,
                 themeCount: themes.count,
+                candidates: 1,
                 total: total,
                 threshold: ParallelJobRunner.crossProductForceThreshold
             )
@@ -257,6 +264,7 @@ public enum ParodyBatchJobBuilder {
             throw ParallelJobError.crossProductRequiresForce(
                 songCount: 1,
                 themeCount: themes.count,
+                candidates: 1,
                 total: total,
                 threshold: ParallelJobRunner.crossProductForceThreshold
             )

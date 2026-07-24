@@ -23,11 +23,12 @@ struct YankovinatorCLI: AsyncParsableCommand {
             --keywords themes.txt --ollama-url https://ollama.example.com \\
             --workers 10 --verbose
 
-        Combinatorial batch (every song × every theme):
+        Combinatorial batch (every song × every theme × 10 candidates):
           swift run yankovinator --input-dir ./songs --themes-dir ./themes \\
-            --output-dir ./out --workers 10 --verbose
-          # Outputs: out/<theme>/<song>.parody.txt
-          # If songs×themes > 100, add --force
+            --output-dir ./out --workers 10 --candidates 10 --verbose
+          # Outputs best: out/<theme>/<song>.parody.txt
+          # Optional: --keep-candidates writes ranked variants
+          # If songs×themes×candidates > 100, add --force
 
         Note: If using line breaks, use backslashes:
           swift run yankovinator lyrics.txt \\
@@ -66,7 +67,16 @@ struct YankovinatorCLI: AsyncParsableCommand {
     )
     var workers: Int = 1
 
-    @Flag(name: .long, help: "Allow songs×themes cross-products larger than 100 jobs")
+    @Option(
+        name: .long,
+        help: "Parody candidates per song×theme (1-32; default 1; use 10 to rank and keep the best)"
+    )
+    var candidates: Int = 1
+
+    @Flag(name: .long, help: "Write all ranked candidate files under <song>.candidates/")
+    var keepCandidates: Bool = false
+
+    @Flag(name: .long, help: "Allow songs×themes×candidates totals larger than 100 generations")
     var force: Bool = false
 
     @Flag(name: .shortAndLong, help: "Show syllable analysis")
@@ -133,9 +143,16 @@ struct YankovinatorCLI: AsyncParsableCommand {
             Many songs, one theme:
               yankovinator --input-dir ./songs --output-dir ./out --keywords themes.txt --workers 10
 
-            Every song × every theme:
-              yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out --workers 10
+            Every song × every theme × 10 candidates:
+              yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \\
+                --workers 10 --candidates 10
             """)
+        }
+
+        do {
+            try CandidateParodyGenerator.validateCandidates(candidates)
+        } catch let error as ParallelJobError {
+            throw ValidationError(error.description)
         }
 
         if hasFile && hasSongsDir {
@@ -208,6 +225,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
             print("Ollama URL: \(ollamaURL)")
             print("Model: \(model)")
             print("Workers: \(workers)")
+            print("Candidates: \(candidates)")
             print("")
         }
 
@@ -220,33 +238,52 @@ struct YankovinatorCLI: AsyncParsableCommand {
                     inputDir: inputDir,
                     themesDir: themesDir,
                     outputDir: outputDir,
-                    force: force
+                    force: true // effective songs×themes×candidates checked below
                 )
             }
-            try await runJobs(jobs, sharedKeywords: nil, label: "songs × themes")
+            try enforceGenerationBudget(baseJobs: jobs.count, songCountHint: nil, themeCountHint: nil)
+            try await runJobs(jobs, sharedKeywords: nil, label: "songs × themes × candidates")
         } else if let inputDir, let outputDir {
             let shared = try loadKeywords()
             let jobs = try buildJobs {
                 try ParodyBatchJobBuilder.jobs(inputDir: inputDir, outputDir: outputDir)
             }
-            try await runJobs(jobs, sharedKeywords: shared, label: "songs (shared theme)")
+            try enforceGenerationBudget(baseJobs: jobs.count, songCountHint: jobs.count, themeCountHint: 1)
+            try await runJobs(jobs, sharedKeywords: shared, label: "songs × candidates (shared theme)")
         } else if let lyricsFile, let themesDir, let outputDir {
             let jobs = try buildJobs {
                 try ParodyBatchJobBuilder.jobs(
                     lyricsPath: lyricsFile,
                     themesDir: themesDir,
                     outputDir: outputDir,
-                    force: force
+                    force: true
                 )
             }
-            try await runJobs(jobs, sharedKeywords: nil, label: "one song × themes")
+            try enforceGenerationBudget(baseJobs: jobs.count, songCountHint: 1, themeCountHint: jobs.count)
+            try await runJobs(jobs, sharedKeywords: nil, label: "one song × themes × candidates")
         } else if let lyricsFile {
-            if workers > 1 && verbose {
-                print("Note: --workers applies to batch / cross-product modes. Running a single job.")
-                print("")
-            }
+            try enforceGenerationBudget(baseJobs: 1, songCountHint: 1, themeCountHint: 1)
             let keywordsDict = try loadKeywords()
             try await runSingleFile(lyricsFile: lyricsFile, keywordsDict: keywordsDict, generator: generator)
+        }
+    }
+
+    private func enforceGenerationBudget(
+        baseJobs: Int,
+        songCountHint: Int?,
+        themeCountHint: Int?
+    ) throws {
+        let total = baseJobs * candidates
+        if total > ParallelJobRunner.crossProductForceThreshold && !force {
+            throw ValidationError(
+                ParallelJobError.crossProductRequiresForce(
+                    songCount: songCountHint ?? baseJobs,
+                    themeCount: themeCountHint ?? 1,
+                    candidates: candidates,
+                    total: total,
+                    threshold: ParallelJobRunner.crossProductForceThreshold
+                ).description
+            )
         }
     }
 
@@ -276,18 +313,49 @@ struct YankovinatorCLI: AsyncParsableCommand {
         }
 
         if verbose {
-            print("Generating parody...")
+            if candidates > 1 {
+                print("Generating \(candidates) candidates (workers=\(workers)) and ranking by coherence...")
+            } else {
+                print("Generating parody...")
+            }
             print("")
         }
 
-        let parodyLines = try await generateParodyLines(
-            generator: generator,
-            originalLyrics: originalLyrics,
-            keywords: keywordsDict,
-            jobLabel: nil
-        )
-
-        let outputText = parodyLines.joined(separator: "\n")
+        let outputText: String
+        if candidates > 1 {
+            let ranked = try await CandidateParodyGenerator.generateRanked(
+                originalLyrics: originalLyrics,
+                keywords: keywordsDict,
+                candidates: candidates,
+                workers: workers,
+                ollamaURL: ollamaURL,
+                ollamaModel: model,
+                refinementPasses: 2
+            )
+            if verbose {
+                for item in ranked.all {
+                    let marker = item.index == ranked.best.index ? "★" : " "
+                    print("\(marker) candidate \(item.index): score=\(String(format: "%.3f", item.score))")
+                }
+                print("")
+            }
+            if keepCandidates, let outputPath = output {
+                try Self.writeCandidateBundle(
+                    best: ranked.best,
+                    all: ranked.all,
+                    outputPath: outputPath
+                )
+            }
+            outputText = ranked.best.text
+        } else {
+            let parodyLines = try await generateParodyLines(
+                generator: generator,
+                originalLyrics: originalLyrics,
+                keywords: keywordsDict,
+                jobLabel: nil
+            )
+            outputText = parodyLines.joined(separator: "\n")
+        }
 
         if let outputPath = output {
             try outputText.write(toFile: outputPath, atomically: true, encoding: .utf8)
@@ -302,13 +370,25 @@ struct YankovinatorCLI: AsyncParsableCommand {
         }
     }
 
+    private struct ExpandedCandidateJob: Sendable {
+        let job: ParodyBatchJob
+        let candidateIndex: Int
+    }
+
+    private struct ScoredExpansion: Sendable {
+        let job: ParodyBatchJob
+        let result: ParodyCandidateResult
+    }
+
     private func runJobs(
         _ jobs: [ParodyBatchJob],
         sharedKeywords: [String: String]?,
         label: String
     ) async throws {
+        let generations = jobs.count * candidates
         if verbose {
-            print("Batch mode (\(label)): \(jobs.count) job(s), up to \(workers) parallel worker(s)")
+            print("Batch mode (\(label)): \(jobs.count) base job(s) × \(candidates) candidate(s) = \(generations) generation(s)")
+            print("Workers: \(workers)")
             for job in jobs.prefix(20) {
                 let themeNote = job.themeId.map { " theme=\($0)" } ?? ""
                 print("  • \(job.id)\(themeNote) → \(job.outputPath)")
@@ -324,21 +404,30 @@ struct YankovinatorCLI: AsyncParsableCommand {
         let model = self.model
         let analyze = self.analyze
         let verbose = self.verbose
+        let keepCandidates = self.keepCandidates
         let defaultKeywords = sharedKeywords
             ?? ["parody": "humorous imitation", "creative": "original and imaginative"]
 
-        let outcomes: [(id: String, outputPath: String)] = try await ParallelJobRunner.map(
-            items: jobs,
+        var expanded: [ExpandedCandidateJob] = []
+        expanded.reserveCapacity(generations)
+        for job in jobs {
+            for candidateIndex in 1...candidates {
+                expanded.append(ExpandedCandidateJob(job: job, candidateIndex: candidateIndex))
+            }
+        }
+
+        let scored: [ScoredExpansion] = try await ParallelJobRunner.map(
+            items: expanded,
             workers: workers,
             progress: { completed, total in
                 if verbose {
-                    Task { await log.printLine("Jobs completed: \(completed)/\(total)") }
+                    Task { await log.printLine("Generations completed: \(completed)/\(total)") }
                 }
             }
-        ) { job in
-            let lyrics = try Self.readLyricsStatic(from: job.lyricsPath)
+        ) { item in
+            let lyrics = try Self.readLyricsStatic(from: item.job.lyricsPath)
             let keywordsDict: [String: String]
-            if let keywordsPath = job.keywordsPath {
+            if let keywordsPath = item.job.keywordsPath {
                 keywordsDict = try Self.loadKeywordsFileStatic(
                     path: keywordsPath,
                     ollamaURL: ollamaURL,
@@ -348,44 +437,90 @@ struct YankovinatorCLI: AsyncParsableCommand {
                 keywordsDict = defaultKeywords
             }
 
-            if analyze {
-                await log.printLine("[\(job.id)] syllable analysis (\(lyrics.filter { !$0.isEmpty }.count) non-empty lines)")
+            if analyze && item.candidateIndex == 1 {
+                await log.printLine("[\(item.job.id)] syllable analysis (\(lyrics.filter { !$0.isEmpty }.count) non-empty lines)")
+            }
+
+            if verbose {
+                await log.printLine("[\(item.job.id)#c\(item.candidateIndex)] generating…")
             }
 
             let generator = ParodyGenerator(ollamaBaseURL: ollamaURL, ollamaModel: model)
-            if verbose {
-                await log.printLine("[\(job.id)] generating (\(keywordsDict.count) keywords)…")
-            }
-
             let parodyLines = try await generator.generateParody(
                 originalLyrics: lyrics,
                 keywords: keywordsDict,
-                progressCallback: { line, total in
-                    if verbose {
-                        Task { await log.printLine("[\(job.id)] line \(line)/\(total)") }
-                    }
-                },
                 refinementPasses: 2,
                 verbose: false
             )
-
-            let outputText = parodyLines.joined(separator: "\n")
-            try outputText.write(toFile: job.outputPath, atomically: true, encoding: .utf8)
+            let score = CandidateParodyGenerator.scoreParody(lines: parodyLines, keywords: keywordsDict)
+            let result = ParodyCandidateResult(index: item.candidateIndex, lines: parodyLines, score: score)
 
             if verbose {
-                await log.printLine("[\(job.id)] saved → \(job.outputPath)")
+                await log.printLine("[\(item.job.id)#c\(item.candidateIndex)] score=\(String(format: "%.3f", score))")
             }
 
-            return (id: job.id, outputPath: job.outputPath)
+            return ScoredExpansion(job: item.job, result: result)
         }
 
-        print("Completed \(outcomes.count) parallel job(s) with \(workers) worker(s) (\(label)).")
+        // Group by job id, pick best candidate, write outputs.
+        var byJob: [String: [ScoredExpansion]] = [:]
+        for item in scored {
+            byJob[item.job.id, default: []].append(item)
+        }
+
+        var outcomes: [(id: String, outputPath: String, score: Double)] = []
+        for job in jobs {
+            guard let group = byJob[job.id], !group.isEmpty else { continue }
+            let ranked = group.map(\.result).sorted { lhs, rhs in
+                if lhs.score != rhs.score { return lhs.score > rhs.score }
+                return lhs.index < rhs.index
+            }
+            guard let best = ranked.first else { continue }
+
+            try best.text.write(toFile: job.outputPath, atomically: true, encoding: .utf8)
+            if keepCandidates && candidates > 1 {
+                try Self.writeCandidateBundle(best: best, all: ranked, outputPath: job.outputPath)
+            }
+            if verbose {
+                await log.printLine("[\(job.id)] best=c\(best.index) score=\(String(format: "%.3f", best.score)) → \(job.outputPath)")
+            }
+            outcomes.append((id: job.id, outputPath: job.outputPath, score: best.score))
+        }
+
+        print("Completed \(outcomes.count) base job(s) / \(generations) generation(s) with \(workers) worker(s) (\(label)).")
         for outcome in outcomes.prefix(50) {
-            print("  \(outcome.id): \(outcome.outputPath)")
+            print("  \(outcome.id): \(outcome.outputPath) (score=\(String(format: "%.3f", outcome.score)))")
         }
         if outcomes.count > 50 {
             print("  … and \(outcomes.count - 50) more")
         }
+    }
+
+    private static func writeCandidateBundle(
+        best: ParodyCandidateResult,
+        all: [ParodyCandidateResult],
+        outputPath: String
+    ) throws {
+        let fm = FileManager.default
+        let parent = (outputPath as NSString).deletingLastPathComponent
+        let stem = ((outputPath as NSString).lastPathComponent as NSString).deletingPathExtension
+            .replacingOccurrences(of: ".parody", with: "")
+        let dir = (parent as NSString).appendingPathComponent("\(stem).candidates")
+        try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+
+        var scoreLines: [String] = ["# ranked candidates (best first)", "best: c\(String(format: "%02d", best.index)) score=\(String(format: "%.6f", best.score))"]
+        for item in all {
+            let name = String(format: "c%02d.parody.txt", item.index)
+            let path = (dir as NSString).appendingPathComponent(name)
+            try item.text.write(toFile: path, atomically: true, encoding: .utf8)
+            let marker = item.index == best.index ? "BEST" : "    "
+            scoreLines.append("\(marker) \(name) score=\(String(format: "%.6f", item.score))")
+        }
+        try scoreLines.joined(separator: "\n").write(
+            toFile: (dir as NSString).appendingPathComponent("scores.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
     }
 
     // MARK: - Shared helpers

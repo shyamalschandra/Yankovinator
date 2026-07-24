@@ -156,7 +156,18 @@ final class ParallelJobRunnerTests: XCTestCase {
                 outputDir: output.path,
                 force: false
             )
-        )
+        ) { error in
+            guard let jobError = error as? ParallelJobError else {
+                XCTFail("Expected ParallelJobError")
+                return
+            }
+            if case .crossProductRequiresForce(_, _, let candidates, let total, _) = jobError {
+                XCTAssertEqual(candidates, 1)
+                XCTAssertEqual(total, 110)
+            } else {
+                XCTFail("Unexpected ParallelJobError: \(jobError)")
+            }
+        }
 
         let forced = try ParodyBatchJobBuilder.crossProductJobs(
             inputDir: songs.path,

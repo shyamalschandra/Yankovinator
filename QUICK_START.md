@@ -90,7 +90,7 @@ swift run yankovinator --input-dir ./songs --output-dir ./out \
   --verbose
 ```
 
-### Combinatorial batch (songs × themes)
+### Combinatorial batch (songs × themes × 10 candidates)
 
 ```bash
 mkdir -p songs themes out
@@ -99,10 +99,10 @@ cp data/example_lyrics.txt songs/b.txt
 cp data/example_keywords.txt themes/space.txt
 
 swift run yankovinator --input-dir ./songs --themes-dir ./themes \
-  --output-dir ./out --workers 10 --verbose
+  --output-dir ./out --workers 10 --candidates 10 --keep-candidates --verbose
 ```
 
-Outputs land at `out/<theme>/<song>.parody.txt`. Job count is `songs × themes`. Above 100 jobs, pass `--force`. `--workers` / `--jobs` caps concurrency (1–32).
+Best outputs land at `out/<theme>/<song>.parody.txt`. Effective generations = `songs × themes × candidates`. Above 100, pass `--force`. `--workers` caps concurrency (1–32).
 
 ## Tools
 
