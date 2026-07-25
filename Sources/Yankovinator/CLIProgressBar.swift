@@ -98,12 +98,20 @@ public actor CLIProgressBar {
     private var finished = false
     private var latestStatus: String = ""
     private let refresh = CLITUIRefreshLoop()
+    private let midi: CLIProgressMIDISoundboard?
 
-    public init(total: Int, label: String = "Jobs", width: Int = 28, theme: TUITheme = TerminalProgress.tuiTheme) {
+    public init(
+        total: Int,
+        label: String = "Jobs",
+        width: Int = 28,
+        theme: TUITheme = TerminalProgress.tuiTheme,
+        enableMIDI: Bool = false
+    ) {
         self.total = max(1, total)
         self.label = label
         self.width = max(8, width)
         self.theme = theme
+        self.midi = enableMIDI && TerminalProgress.isInteractive ? CLIProgressMIDISoundboard.shared : nil
         Task { await refresh.setRedrawHandler { [weak self] in await self?.renderNow() } }
     }
 
@@ -117,6 +125,10 @@ public actor CLIProgressBar {
         guard !finished, amount > 0 else { return }
         completed = min(total, completed + amount)
         animationTick += 1
+        if let midi {
+            let done = completed
+            Task { await midi.playOverallMilestone(completed: done, total: total) }
+        }
         Task { await refresh.scheduleRedraw() }
     }
 
@@ -126,6 +138,10 @@ public actor CLIProgressBar {
         completed = total
         await refresh.cancelPending()
         renderNow()
+        if let midi {
+            await midi.playBatchComplete(workerCount: 1)
+            await midi.shutdown()
+        }
         if theme.useEmoji {
             fputs("\(theme.wrap("✅ Done", ANSI.fgGreen))\n", stderr)
         } else {
@@ -175,6 +191,7 @@ public actor CLIWorkerPoolProgress {
     private let batchStartedAt: Date
     private let refresh = CLITUIRefreshLoop()
     private var animationTask: Task<Void, Never>?
+    private let midi: CLIProgressMIDISoundboard?
 
     public init(
         total: Int,
@@ -182,7 +199,8 @@ public actor CLIWorkerPoolProgress {
         label: String = "Generations",
         overallWidth: Int = 24,
         workerBarWidth: Int = 16,
-        theme: TUITheme = TerminalProgress.tuiTheme
+        theme: TUITheme = TerminalProgress.tuiTheme,
+        enableMIDI: Bool = false
     ) {
         self.total = max(1, total)
         self.workerCount = max(1, workerCount)
@@ -193,6 +211,7 @@ public actor CLIWorkerPoolProgress {
         self.slots = Array(repeating: .idle, count: self.workerCount)
         self.workerBusySeconds = Array(repeating: 0, count: self.workerCount)
         self.batchStartedAt = Date()
+        self.midi = enableMIDI && TerminalProgress.isInteractive ? CLIProgressMIDISoundboard.shared : nil
 
         if TerminalProgress.isInteractive {
             animationTask = Task { [weak self] in
@@ -219,6 +238,9 @@ public actor CLIWorkerPoolProgress {
     public func beginJob(workerID: Int, jobNumber: Int) {
         guard !finished, workerID >= 0, workerID < workerCount else { return }
         slots[workerID] = .working(jobNumber: jobNumber, tick: animationTick, startedAt: Date())
+        if let midi {
+            Task { await midi.playWorkerStart(workerID: workerID) }
+        }
         Task { await refresh.scheduleRedraw() }
     }
 
@@ -230,6 +252,11 @@ public actor CLIWorkerPoolProgress {
         slots[workerID] = .idle
         completed = min(total, completed + 1)
         animationTick += 1
+        if let midi {
+            let done = completed
+            Task { await midi.playWorkerComplete(workerID: workerID) }
+            Task { await midi.playOverallMilestone(completed: done, total: total) }
+        }
         Task { await refresh.scheduleRedraw() }
     }
 
@@ -252,6 +279,10 @@ public actor CLIWorkerPoolProgress {
         slots = Array(repeating: .idle, count: workerCount)
         await refresh.cancelPending()
         renderNow()
+        if let midi {
+            await midi.playBatchComplete(workerCount: workerCount)
+            await midi.shutdown()
+        }
         let doneLine = theme.useEmoji
             ? theme.wrap("✅ All generations complete", ANSI.fgGreen + ANSI.bold)
             : "Done."
@@ -261,12 +292,18 @@ public actor CLIWorkerPoolProgress {
 
     private func animationHeartbeat() {
         guard !finished else { return }
-        let anyWorking = slots.contains {
-            if case .working = $0 { return true }
-            return false
+        var workingIDs: [Int] = []
+        for (workerID, slot) in slots.enumerated() {
+            if case .working = slot { workingIDs.append(workerID) }
         }
-        guard anyWorking else { return }
+        guard !workingIDs.isEmpty else { return }
         animationTick &+= 1
+        if let midi {
+            let tick = animationTick
+            for workerID in workingIDs {
+                Task { await midi.playWorkerPulse(workerID: workerID, globalTick: tick) }
+            }
+        }
         Task { await refresh.scheduleRedraw() }
     }
 

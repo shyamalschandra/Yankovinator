@@ -97,6 +97,9 @@ struct YankovinatorCLI: AsyncParsableCommand {
     @Flag(name: .long, help: "Disable stderr progress bar for batch / multi-candidate runs")
     var noProgress: Bool = false
 
+    @Flag(name: .long, help: "Play lightweight MIDI cues per worker progress bar (interactive terminal only)")
+    var midiProgress: Bool = false
+
     // Validate options after parsing
     mutating func validate() throws {
         if let file = lyricsFile {
@@ -509,7 +512,12 @@ struct YankovinatorCLI: AsyncParsableCommand {
         let serverParallel = resolvedOllamaNumParallel()
         let progressHandle: CLIWorkerPoolProgress? =
             (showProgress && TerminalProgress.isInteractive && poolSize > 1)
-            ? CLIWorkerPoolProgress(total: generations, workerCount: poolSize, label: "Generations")
+            ? CLIWorkerPoolProgress(
+                total: generations,
+                workerCount: poolSize,
+                label: "Generations",
+                enableMIDI: midiProgress
+            )
             : nil
 
         if showProgress && TerminalProgress.isInteractive {
@@ -525,6 +533,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
             progressLabel: "Generations",
             ollamaNumParallel: serverParallel,
             progressHandle: progressHandle,
+            enableMIDIProgress: midiProgress,
             progress: { completed, total in
                 if verbose {
                     if useTUIStatus {

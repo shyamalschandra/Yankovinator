@@ -65,6 +65,7 @@ public enum ParallelJobRunner {
         progressLabel: String = "Jobs",
         ollamaNumParallel: Int? = nil,
         progressHandle: CLIWorkerPoolProgress? = nil,
+        enableMIDIProgress: Bool = false,
         progress: (@Sendable (Int, Int) -> Void)? = nil,
         operation: @escaping @Sendable (Item) async throws -> Result
     ) async throws -> [Result] {
@@ -73,14 +74,15 @@ public enum ParallelJobRunner {
         let poolSize = consumerPoolSize(requestedWorkers: workers, ollamaNumParallel: ollamaNumParallel)
         let showUI = showProgress && TerminalProgress.isInteractive && items.count > 1
         let simpleBar: CLIProgressBar? = (showUI && poolSize == 1)
-            ? CLIProgressBar(total: items.count, label: progressLabel)
+            ? CLIProgressBar(total: items.count, label: progressLabel, enableMIDI: enableMIDIProgress)
             : nil
         let workerPool: CLIWorkerPoolProgress?
         if showUI && poolSize > 1 {
             workerPool = progressHandle ?? CLIWorkerPoolProgress(
                 total: items.count,
                 workerCount: poolSize,
-                label: progressLabel
+                label: progressLabel,
+                enableMIDI: enableMIDIProgress
             )
         } else {
             workerPool = progressHandle

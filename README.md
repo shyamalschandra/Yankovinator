@@ -44,11 +44,11 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.4**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.5**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.4/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.5/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/
@@ -145,6 +145,7 @@ swift run yankovinator <lyrics-file> [options]
 - `--force`: Allow songs×themes×candidates totals larger than 100 generations
 - `--ollama-timeout <sec>`: Per-request Ollama HTTP timeout (30–900; cloud models default to 300s)
 - `--no-progress`: Disable stderr progress bar for batch / multi-candidate runs
+- `--midi-progress`: Lightweight MIDI cues per worker bar (macOS, interactive terminal only)
 - `--analyze, -a`: Show syllable analysis
 - `--verbose, -v`: Verbose output
 
