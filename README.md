@@ -24,7 +24,7 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 - NaturalLanguage framework integration
 - Local or cloud Ollama integration (`llama3.2:3b` by default; any `--ollama-url`)
 - Parallel workers for batch jobs (`--workers 10` / `--jobs 10`) with a **producer–consumer queue** (max **10** concurrent consumers)
-- Batch progress bar on stderr (disable with `--no-progress`)
+- Batch **TUI progress** on stderr: Unicode block bars, colors, emojis, and one live row per cloud worker (disable with `--no-progress`; plain text when not a TTY)
 - Combinatorial batch: every song × every theme via `--input-dir` + `--themes-dir`
 - Multi-candidate ranking: `--candidates 10` generates and scores variants per song×theme
 - CLI tools: `yankovinator`, `keyword-generator`, `benchmark`
@@ -44,11 +44,11 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.1**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.2**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.1/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.2/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/

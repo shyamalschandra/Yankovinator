@@ -1,6 +1,6 @@
 > **Current status (2026):** Yankovinator ships with **Ollama** (`llama3.2:3b`), not Apple Foundation Models. Use [README.md](README.md) and [QUICK_START.md](QUICK_START.md) for accurate instructions.
 
-# Deployment Checklist (v1.04.1 / Ollama)
+# Deployment Checklist (v1.04.2 / Ollama)
 
 ## Pre-release
 
@@ -8,7 +8,7 @@
 - [x] XCTest suite green with Xcode developer dir (`swift test`)
 - [x] Certification battery: `./scripts/certification-battery.sh`
 - [x] CLI help works: `yankovinator`, `keyword-generator`, `benchmark`
-- [x] Producer–consumer pool (max 10 consumers) + progress bar (`--no-progress`)
+- [x] TUI worker pool progress (Unicode / color / emoji on TTY)
 - [x] Cloud Ollama retries / `--ollama-timeout`
 - [x] Combinatorial songs×themes×candidates verified
 - [x] Ollama integration verified with `llama3.2:3b`
@@ -20,14 +20,14 @@
 ## Release steps
 
 ```bash
-git tag -a v1.04.1 -m "Release v1.04.1"
-git push origin v1.04.1
+git tag -a v1.04.2 -m "Release v1.04.2"
+git push origin v1.04.2
 ```
 
 After assets publish:
 
 1. Verify release archives + `.sha256` files
-2. Update Homebrew tap formula version + SHA256 (`./update-homebrew-tap.sh 1.04.1`)
+2. Update Homebrew tap formula version + SHA256 (`./update-homebrew-tap.sh 1.04.2`)
 3. Confirm Pages site: https://shyamalschandra.github.io/Yankovinator/
 
 ## Post-release smoke

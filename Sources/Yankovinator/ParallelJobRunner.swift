@@ -57,9 +57,12 @@ public enum ParallelJobRunner {
         guard !items.isEmpty else { return [] }
 
         let poolSize = consumerPoolSize(requestedWorkers: workers)
-        let progressBar: CLIProgressBar? =
-            (showProgress && TerminalProgress.isInteractive && items.count > 1)
+        let showUI = showProgress && TerminalProgress.isInteractive && items.count > 1
+        let simpleBar: CLIProgressBar? = (showUI && poolSize == 1)
             ? CLIProgressBar(total: items.count, label: progressLabel)
+            : nil
+        let workerPool: CLIWorkerPoolProgress? = (showUI && poolSize > 1)
+            ? CLIWorkerPoolProgress(total: items.count, workerCount: poolSize, label: progressLabel)
             : nil
 
         if poolSize == 1 || items.count == 1 {
@@ -68,16 +71,16 @@ public enum ParallelJobRunner {
             for (index, item) in items.enumerated() {
                 results.append(try await operation(item))
                 progress?(index + 1, items.count)
-                if let progressBar { await progressBar.advance() }
+                if let simpleBar { await simpleBar.advance() }
             }
-            if let progressBar { await progressBar.finish() }
+            if let simpleBar { await simpleBar.finish() }
             return results
         }
 
         return try await mapProducerConsumer(
             items: items,
             consumerCount: poolSize,
-            progressBar: progressBar,
+            workerPool: workerPool,
             progress: progress,
             operation: operation
         )
@@ -87,7 +90,7 @@ public enum ParallelJobRunner {
     private static func mapProducerConsumer<Item: Sendable, Result: Sendable>(
         items: [Item],
         consumerCount: Int,
-        progressBar: CLIProgressBar?,
+        workerPool: CLIWorkerPoolProgress?,
         progress: (@Sendable (Int, Int) -> Void)?,
         operation: @escaping @Sendable (Item) async throws -> Result
     ) async throws -> [Result] {
@@ -104,15 +107,18 @@ public enum ParallelJobRunner {
                 continuation.finish()
             }
 
-            for _ in 0..<consumerCount {
+            for workerID in 0..<consumerCount {
                 group.addTask {
                     for await (index, item) in stream {
+                        if let workerPool {
+                            await workerPool.beginJob(workerID: workerID, jobNumber: index + 1)
+                        }
                         let value = try await operation(item)
                         await store.put(index: index, value: value)
                         let (done, total) = await counter.increment()
                         progress?(done, total)
-                        if let progressBar {
-                            await progressBar.advance()
+                        if let workerPool {
+                            await workerPool.completeJob(workerID: workerID)
                         }
                     }
                 }
@@ -121,8 +127,8 @@ public enum ParallelJobRunner {
             try await group.waitForAll()
         }
 
-        if let progressBar {
-            await progressBar.finish()
+        if let workerPool {
+            await workerPool.finish()
         }
         return try await store.orderedResults()
     }
