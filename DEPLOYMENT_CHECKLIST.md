@@ -11,7 +11,7 @@
 - [x] OLLAMA_NUM_PARALLEL alignment + `--ollama-num-parallel` / `--ollama-num-workers`
 - [x] `--midi-progress` MIDI cues per worker bar (macOS, interactive)
 - [x] Cloud batch prescription + `--no-cloud-prescription`
-- [x] Batch fast path + incremental `.parody.txt` checkpoints
+- [x] Ollama `think: false` on generate (thinking models e.g. deepseek-v4-pro:cloud)
 - [x] Batch startup optimizations + async TUI with worker ETAs
 - [x] Cloud Ollama retries / `--ollama-timeout`
 - [x] Combinatorial songs×themes×candidates verified
@@ -24,14 +24,14 @@
 ## Release steps
 
 ```bash
-git tag -a v1.04.7 -m "Release v1.04.7"
-git push origin v1.04.7
+git tag -a v1.04.8 -m "Release v1.04.8"
+git push origin v1.04.8
 ```
 
 After assets publish:
 
 1. Verify release archives + `.sha256` files
-2. Update Homebrew tap formula version + SHA256 (`./update-homebrew-tap.sh 1.04.7`)
+2. Update Homebrew tap formula version + SHA256 (`./update-homebrew-tap.sh 1.04.8`)
 3. Confirm Pages site: https://shyamalschandra.github.io/Yankovinator/
 
 ## Post-release smoke
