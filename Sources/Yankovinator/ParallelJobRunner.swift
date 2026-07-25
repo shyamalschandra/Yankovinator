@@ -14,8 +14,16 @@ public enum ParallelJobRunner {
     /// Suggested worker count for cloud Ollama batch runs.
     public static let recommendedCloudWorkers = 10
 
-    /// Hard upper bound to avoid overwhelming remote hosts.
+    /// Hard upper bound for CLI `--workers` (queue can hold more; consumers stay capped).
     public static let maxWorkers = 32
+
+    /// Maximum concurrent consumer workers (producer-consumer pool size).
+    public static let maxConcurrentConsumers = 10
+
+    /// Effective consumer count: at most `maxConcurrentConsumers` workers run at once.
+    public static func consumerPoolSize(requestedWorkers: Int) -> Int {
+        min(clampWorkers(requestedWorkers), maxConcurrentConsumers)
+    }
 
     /// Effective generation counts (songs × themes × candidates) above this require `--force`.
     public static let crossProductForceThreshold = 100
@@ -33,66 +41,127 @@ public enum ParallelJobRunner {
         }
     }
 
-    /// Map `items` through `operation` with at most `workers` concurrent tasks.
-    /// Results are returned in the same order as `items`.
+    /// Map `items` through `operation` using a producer-consumer queue.
     ///
-    /// - Parameters:
-    ///   - items: Work items (each item is one independent job).
-    ///   - workers: Maximum concurrent jobs (clamped to `maxWorkers`).
-    ///   - progress: Optional callback `(completed, total)` after each job finishes.
-    ///   - operation: Async work for a single item.
+    /// - Producer: enqueues all items in order.
+    /// - Consumers: fixed pool of size `consumerPoolSize(workers)` (max 10) pulls jobs concurrently.
+    /// - Results preserve input order.
     public static func map<Item: Sendable, Result: Sendable>(
         items: [Item],
         workers: Int,
+        showProgress: Bool = false,
+        progressLabel: String = "Jobs",
         progress: (@Sendable (Int, Int) -> Void)? = nil,
         operation: @escaping @Sendable (Item) async throws -> Result
     ) async throws -> [Result] {
-        let workerCount = clampWorkers(workers)
         guard !items.isEmpty else { return [] }
 
-        if workerCount == 1 || items.count == 1 {
+        let poolSize = consumerPoolSize(requestedWorkers: workers)
+        let progressBar: CLIProgressBar? =
+            (showProgress && TerminalProgress.isInteractive && items.count > 1)
+            ? CLIProgressBar(total: items.count, label: progressLabel)
+            : nil
+
+        if poolSize == 1 || items.count == 1 {
             var results: [Result] = []
             results.reserveCapacity(items.count)
             for (index, item) in items.enumerated() {
                 results.append(try await operation(item))
                 progress?(index + 1, items.count)
+                if let progressBar { await progressBar.advance() }
             }
+            if let progressBar { await progressBar.finish() }
             return results
         }
 
-        return try await withThrowingTaskGroup(of: (Int, Result).self) { group in
-            var nextIndex = 0
-            var results = Array<Result?>(repeating: nil, count: items.count)
-            var completed = 0
+        return try await mapProducerConsumer(
+            items: items,
+            consumerCount: poolSize,
+            progressBar: progressBar,
+            progress: progress,
+            operation: operation
+        )
+    }
 
-            func enqueue() {
-                while nextIndex < items.count && nextIndex < completed + workerCount {
-                    let index = nextIndex
-                    let item = items[index]
-                    nextIndex += 1
-                    group.addTask {
+    /// Producer-consumer executor (OS-style bounded worker pool).
+    private static func mapProducerConsumer<Item: Sendable, Result: Sendable>(
+        items: [Item],
+        consumerCount: Int,
+        progressBar: CLIProgressBar?,
+        progress: (@Sendable (Int, Int) -> Void)?,
+        operation: @escaping @Sendable (Item) async throws -> Result
+    ) async throws -> [Result] {
+        let store = OrderedResultStore<Result>(capacity: items.count)
+        let counter = CompletionCounter(total: items.count)
+
+        let (stream, continuation) = AsyncStream<(Int, Item)>.makeStream()
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for (index, item) in items.enumerated() {
+                    continuation.yield((index, item))
+                }
+                continuation.finish()
+            }
+
+            for _ in 0..<consumerCount {
+                group.addTask {
+                    for await (index, item) in stream {
                         let value = try await operation(item)
-                        return (index, value)
+                        await store.put(index: index, value: value)
+                        let (done, total) = await counter.increment()
+                        progress?(done, total)
+                        if let progressBar {
+                            await progressBar.advance()
+                        }
                     }
                 }
             }
 
-            enqueue()
-
-            for try await (index, value) in group {
-                results[index] = value
-                completed += 1
-                progress?(completed, items.count)
-                enqueue()
-            }
-
-            return results.map { result in
-                guard let result else {
-                    preconditionFailure("ParallelJobRunner missing result slot")
-                }
-                return result
-            }
+            try await group.waitForAll()
         }
+
+        if let progressBar {
+            await progressBar.finish()
+        }
+        return try await store.orderedResults()
+    }
+}
+
+// MARK: - Producer-consumer helpers
+
+private actor OrderedResultStore<Result: Sendable> {
+    private var slots: [Result?]
+
+    init(capacity: Int) {
+        slots = Array(repeating: nil, count: capacity)
+    }
+
+    func put(index: Int, value: Result) {
+        slots[index] = value
+    }
+
+    func orderedResults() throws -> [Result] {
+        try slots.enumerated().map { offset, value in
+            guard let value else {
+                throw ParallelJobError.missingProducerConsumerResult(index: offset)
+            }
+            return value
+        }
+    }
+}
+
+private actor CompletionCounter {
+    private var completed = 0
+    let total: Int
+
+    init(total: Int) {
+        self.total = total
+    }
+
+    func increment() -> (Int, Int) {
+        completed += 1
+        return (completed, total)
     }
 }
 
@@ -106,11 +175,12 @@ public enum ParallelJobError: Error, CustomStringConvertible, Sendable {
     case cannotCreateOutputDirectory(String)
     case crossProductRequiresForce(songCount: Int, themeCount: Int, candidates: Int, total: Int, threshold: Int)
     case noCandidatesProduced
+    case missingProducerConsumerResult(index: Int)
 
     public var description: String {
         switch self {
         case .invalidWorkerCount(let requested, let max):
-            return "Workers must be between 1 and \(max) (got \(requested)). For cloud Ollama batch jobs, try --workers \(ParallelJobRunner.recommendedCloudWorkers)."
+            return "Workers must be between 1 and \(max) (got \(requested)). Concurrent consumers are capped at \(ParallelJobRunner.maxConcurrentConsumers) (producer-consumer queue)."
         case .invalidCandidateCount(let requested, let max):
             return "Candidates must be between 1 and \(max) (got \(requested)). For combinatorial ranking, try --candidates \(CandidateParodyGenerator.recommendedCandidates)."
         case .emptyInputDirectory(let path):
@@ -128,6 +198,8 @@ public enum ParallelJobError: Error, CustomStringConvertible, Sendable {
             """
         case .noCandidatesProduced:
             return "No parody candidates were produced."
+        case .missingProducerConsumerResult(let index):
+            return "Internal error: missing result for queued job at index \(index)."
         }
     }
 }

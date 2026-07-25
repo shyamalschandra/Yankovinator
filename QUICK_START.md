@@ -102,7 +102,14 @@ swift run yankovinator --input-dir ./songs --themes-dir ./themes \
   --output-dir ./out --workers 10 --candidates 10 --keep-candidates --verbose
 ```
 
-Best outputs land at `out/<theme>/<song>.parody.txt`. Effective generations = `songs × themes × candidates`. Above 100, pass `--force`. `--workers` caps concurrency (1–32).
+Best outputs land at `out/<theme>/<song>.parody.txt`. Effective generations = `songs × themes × candidates`. Above 100, pass `--force`. Up to **10 consumers** run concurrently regardless of higher `--workers`; stderr shows a progress bar unless `--no-progress`.
+
+### Certification battery (releases)
+
+```bash
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+./scripts/certification-battery.sh
+```
 
 ## Tools
 

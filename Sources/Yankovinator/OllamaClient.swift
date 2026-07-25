@@ -12,6 +12,51 @@ public class OllamaClient {
     // This ensures proper lifecycle management and avoids connection issues
     private static var sharedHTTPClient: HTTPClient?
     private static let clientLock = NSLock()
+
+    /// Per-request timeouts (seconds). Override via `applyRuntimePolicy` / CLI `--ollama-timeout`.
+    public static var generateTimeoutSeconds = 180
+    public static var surpriseTimeoutSeconds = 90
+    public static var keywordsTimeoutSeconds = 180
+    public static var tagsTimeoutSeconds = 10
+
+    private static var workerConnectionHint = 16
+    private static let maxRetryAttempts = 4
+
+    /// Tune HTTP client for parallel workers and cloud models. Call before the first Ollama request in a run.
+    public static func applyRuntimePolicy(model: String, workers: Int, timeoutOverride: Int? = nil) {
+        clientLock.lock()
+        defer { clientLock.unlock() }
+
+        let concurrent = ParallelJobRunner.consumerPoolSize(requestedWorkers: workers)
+        workerConnectionHint = max(4, min(concurrent + 4, 64))
+
+        if let timeout = timeoutOverride {
+            generateTimeoutSeconds = timeout
+            surpriseTimeoutSeconds = max(45, timeout / 2)
+            keywordsTimeoutSeconds = timeout
+        } else if model.lowercased().contains("cloud") {
+            generateTimeoutSeconds = 300
+            surpriseTimeoutSeconds = 120
+            keywordsTimeoutSeconds = 300
+        } else {
+            generateTimeoutSeconds = 180
+            surpriseTimeoutSeconds = 90
+            keywordsTimeoutSeconds = 180
+        }
+    }
+
+    private static func sharedConfiguration() -> HTTPClient.Configuration {
+        var configuration = HTTPClient.Configuration()
+        // Read timeout must exceed per-request execute timeout (especially for cloud models).
+        configuration.timeout = HTTPClient.Configuration.Timeout(
+            connect: .seconds(60),
+            read: .seconds(600)
+        )
+        configuration.connectionPool.idleTimeout = .seconds(120)
+        configuration.connectionPool.concurrentHTTP1ConnectionsPerHostSoftLimit =
+            max(8, workerConnectionHint)
+        return configuration
+    }
     
     private let baseURL: String
     private let model: String
@@ -31,23 +76,53 @@ public class OllamaClient {
         defer { Self.clientLock.unlock() }
         
         if Self.sharedHTTPClient == nil {
-            // Configure HTTP client with proper settings
-            var configuration = HTTPClient.Configuration()
-            configuration.timeout = HTTPClient.Configuration.Timeout(
-                connect: .seconds(30),
-                read: .seconds(120)
+            Self.sharedHTTPClient = HTTPClient(
+                eventLoopGroupProvider: .singleton,
+                configuration: Self.sharedConfiguration()
             )
-            // Enable connection pooling and keep-alive for parallel cloud workers
-            configuration.connectionPool.idleTimeout = .seconds(60)
-            configuration.connectionPool.concurrentHTTP1ConnectionsPerHostSoftLimit =
-                ParallelJobRunner.maxWorkers
-            // Use singleton event loop group (recommended approach)
-            // This uses a system-managed shared event loop that's properly initialized
-            Self.sharedHTTPClient = HTTPClient(eventLoopGroupProvider: .singleton, configuration: configuration)
         }
         
         // Use the shared HTTP client instance
         self.httpClient = Self.sharedHTTPClient!
+    }
+
+    private func executeWithRetry(
+        timeoutSeconds: Int,
+        makeRequest: () throws -> HTTPClientRequest
+    ) async throws -> HTTPClientResponse {
+        var lastError: Error?
+        for attempt in 1...Self.maxRetryAttempts {
+            do {
+                let request = try makeRequest()
+                return try await httpClient.execute(
+                    request,
+                    timeout: .seconds(Int64(timeoutSeconds))
+                )
+            } catch {
+                lastError = error
+                if attempt < Self.maxRetryAttempts, Self.isTransientNetworkError(error) {
+                    try await Task.sleep(nanoseconds: UInt64(attempt) * 2_000_000_000)
+                    continue
+                }
+                throw error
+            }
+        }
+        if let lastError {
+            throw lastError
+        }
+        throw OllamaError.invalidResponse
+    }
+
+    private static func isTransientNetworkError(_ error: Error) -> Bool {
+        if error is HTTPClientError { return true }
+        let s = String(describing: error).lowercased()
+        if s.contains("timeout") || s.contains("deadline") { return true }
+        if s.contains("httpclienterror") || s.contains("error 1") { return true }
+        if s.contains("connection") {
+            return s.contains("reset") || s.contains("closed") || s.contains("refused")
+                || s.contains("not connected")
+        }
+        return false
     }
     
     deinit {
@@ -248,21 +323,21 @@ public class OllamaClient {
         ]
         requestBody["options"] = options
         
-        // Serialize JSON first to validate
         let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
-        
-        // Create request - use apiURL string directly (HTTPClientRequest accepts String)
-        var request = HTTPClientRequest(url: apiURL)
-        request.method = .POST
-        request.headers.add(name: "Content-Type", value: "application/json")
-        request.headers.add(name: "Accept", value: "application/json")
-        request.headers.add(name: "Connection", value: "keep-alive")
-        request.body = .bytes(ByteBuffer(data: jsonData))
         
         // Execute request with detailed logging
         let response: HTTPClientResponse
         do {
-            response = try await httpClient.execute(request, timeout: .seconds(60))
+            let jsonDataForRequest = jsonData
+            response = try await executeWithRetry(timeoutSeconds: Self.generateTimeoutSeconds) {
+                var request = HTTPClientRequest(url: apiURL)
+                request.method = .POST
+                request.headers.add(name: "Content-Type", value: "application/json")
+                request.headers.add(name: "Accept", value: "application/json")
+                request.headers.add(name: "Connection", value: "keep-alive")
+                request.body = .bytes(ByteBuffer(data: jsonDataForRequest))
+                return request
+            }
         } catch {
             // Network-level error
             throw OllamaError.networkError(error)
@@ -417,15 +492,17 @@ public class OllamaClient {
         ]
 
         let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
-        var request = HTTPClientRequest(url: apiURL)
-        request.method = .POST
-        request.headers.add(name: "Content-Type", value: "application/json")
-        request.headers.add(name: "Accept", value: "application/json")
-        request.body = .bytes(ByteBuffer(data: jsonData))
-
         let response: HTTPClientResponse
         do {
-            response = try await httpClient.execute(request, timeout: .seconds(45))
+            let payload = jsonData
+            response = try await executeWithRetry(timeoutSeconds: Self.surpriseTimeoutSeconds) {
+                var request = HTTPClientRequest(url: apiURL)
+                request.method = .POST
+                request.headers.add(name: "Content-Type", value: "application/json")
+                request.headers.add(name: "Accept", value: "application/json")
+                request.body = .bytes(ByteBuffer(data: payload))
+                return request
+            }
         } catch {
             throw OllamaError.networkError(error)
         }
@@ -466,12 +543,13 @@ public class OllamaClient {
             return false
         }
         
-        var request = HTTPClientRequest(url: checkURL)
-        request.method = .GET
-        request.headers.add(name: "Connection", value: "keep-alive")
-        
         do {
-            let response = try await httpClient.execute(request, timeout: .seconds(5))
+            let response = try await executeWithRetry(timeoutSeconds: Self.tagsTimeoutSeconds) {
+                var request = HTTPClientRequest(url: checkURL)
+                request.method = .GET
+                request.headers.add(name: "Connection", value: "keep-alive")
+                return request
+            }
             
             guard response.status == .ok else {
                 return false
@@ -565,23 +643,21 @@ public class OllamaClient {
         
         let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
         
-        var request = HTTPClientRequest(url: apiURL)
-        request.method = .POST
-        request.headers.add(name: "Content-Type", value: "application/json")
-        request.headers.add(name: "Accept", value: "application/json")
-        request.headers.add(name: "Connection", value: "keep-alive")
-        request.body = .bytes(ByteBuffer(data: jsonData))
-        
-        // Execute request - ensure we're not blocking the event loop
         let response: HTTPClientResponse
         do {
-            response = try await httpClient.execute(request, timeout: .seconds(120))
+            let payload = jsonData
+            response = try await executeWithRetry(timeoutSeconds: Self.keywordsTimeoutSeconds) {
+                var request = HTTPClientRequest(url: apiURL)
+                request.method = .POST
+                request.headers.add(name: "Content-Type", value: "application/json")
+                request.headers.add(name: "Accept", value: "application/json")
+                request.headers.add(name: "Connection", value: "keep-alive")
+                request.body = .bytes(ByteBuffer(data: payload))
+                return request
+            }
         } catch let error as HTTPClientError {
-            // Provide more specific error handling for HTTPClientError
-            // HTTPClientError error 1 typically means invalid state or connection issue
             throw OllamaError.networkError(error)
         } catch {
-            // Include URL context in error for better debugging
             throw OllamaError.networkError(error)
         }
         
@@ -693,7 +769,7 @@ public enum OllamaError: Error, CustomStringConvertible {
             } else if errorString.lowercased().contains("connection") && (errorString.lowercased().contains("close") || errorString.lowercased().contains("refused")) {
                 suggestions = " This may indicate Ollama stopped responding or is not accessible. Ensure Ollama is running: 'ollama serve'"
             } else if errorString.contains("error 1") || errorString.contains("HTTPClientError") {
-                suggestions = " This is typically a connection error. Ensure Ollama is running and accessible at the configured URL."
+                suggestions = " Often caused by too many parallel cloud requests or a short timeout. Retry with --workers 4, fewer --candidates, or --ollama-timeout 600."
             }
             
             return "Network error: \(errorDescription).\(suggestions) Please verify Ollama is running: 'ollama serve'"

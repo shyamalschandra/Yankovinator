@@ -7,8 +7,8 @@
 class Yankovinator < Formula
   desc "Convert songs into parodies with theme-based constraints using llama on Ollama"
   homepage "https://github.com/shyamalschandra/Yankovinator"
-  url "https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04/yankovinator-universal.tar.gz"
-  sha256 "263480b8acc5eb50cd4b9f31d89ac27df83fa8298c62e6829f7dd718b2e93aa0"
+  url "https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.1/yankovinator-universal.tar.gz"
+  sha256 "REPLACE_AFTER_RELEASE"
   license :cannot_represent
 
   depends_on macos: :ventura
@@ -27,7 +27,7 @@ class Yankovinator < Formula
         # or: brew install ollama && ollama serve
         ollama pull llama3.2:3b
 
-      Parallel batch against cloud Ollama:
+      Parallel batch against cloud Ollama (producer-consumer, max 10 consumers):
         yankovinator --input-dir ./songs --output-dir ./out \\
           --keywords themes.txt --ollama-url https://ollama.example.com --workers 10
 

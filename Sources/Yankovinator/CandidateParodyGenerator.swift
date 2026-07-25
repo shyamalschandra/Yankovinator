@@ -72,6 +72,7 @@ public enum CandidateParodyGenerator {
         keywords: [String: String],
         candidates: Int,
         workers: Int,
+        showProgress: Bool = false,
         ollamaURL: String = "http://localhost:11434",
         ollamaModel: String = "llama3.2:3b",
         refinementPasses: Int = 2
@@ -81,7 +82,9 @@ public enum CandidateParodyGenerator {
 
         let results: [ParodyCandidateResult] = try await ParallelJobRunner.map(
             items: indexes,
-            workers: workers
+            workers: workers,
+            showProgress: showProgress,
+            progressLabel: "Candidates"
         ) { index in
             let generator = ParodyGenerator(
                 ollamaBaseURL: ollamaURL,

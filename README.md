@@ -23,7 +23,8 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 - Unsupervised NLP helpers: embedding lexical substitution, rhyme clustering, next-line coherence critic
 - NaturalLanguage framework integration
 - Local or cloud Ollama integration (`llama3.2:3b` by default; any `--ollama-url`)
-- Parallel workers for batch jobs (`--workers 10` / `--jobs 10`) against cloud Ollama
+- Parallel workers for batch jobs (`--workers 10` / `--jobs 10`) with a **producer–consumer queue** (max **10** concurrent consumers)
+- Batch progress bar on stderr (disable with `--no-progress`)
 - Combinatorial batch: every song × every theme via `--input-dir` + `--themes-dir`
 - Multi-candidate ranking: `--candidates 10` generates and scores variants per song×theme
 - CLI tools: `yankovinator`, `keyword-generator`, `benchmark`
@@ -43,11 +44,11 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.1**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.1/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/
@@ -137,10 +138,12 @@ swift run yankovinator <lyrics-file> [options]
 - `--input-dir <dir>`: Directory of `.txt` lyrics files (batch / parallel jobs)
 - `--themes-dir <dir>`: Directory of theme keyword `.txt` files; with `--input-dir` runs **every song × every theme**
 - `--output-dir <dir>`: Output directory for batch mode (`<song>.parody.txt`, or `<theme>/<song>.parody.txt` for cross-product)
-- `--workers, --jobs <n>`: Max parallel jobs (1–32; default 1; use `10` for cloud batch)
+- `--workers, --jobs <n>`: Requested worker count (1–32; default 1). At most **10 consumers** run at once (producer–consumer queue).
 - `--candidates <n>`: Generate N ranked variants per song×theme (1–32; use `10` for combinatorial ranking)
 - `--keep-candidates`: Also write ranked variants under `<song>.candidates/`
 - `--force`: Allow songs×themes×candidates totals larger than 100 generations
+- `--ollama-timeout <sec>`: Per-request Ollama HTTP timeout (30–900; cloud models default to 300s)
+- `--no-progress`: Disable stderr progress bar for batch / multi-candidate runs
 - `--analyze, -a`: Show syllable analysis
 - `--verbose, -v`: Verbose output
 

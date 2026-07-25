@@ -49,6 +49,9 @@ struct YankovinatorCLI: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Ollama model name (default: llama3.2:3b)")
     var model: String = "llama3.2:3b"
 
+    @Option(name: .long, help: "Per-request Ollama HTTP timeout in seconds (30-900; default 300 for :cloud models, 180 otherwise)")
+    var ollamaTimeout: Int?
+
     @Option(name: .shortAndLong, help: "Output file path for single-file mode (default: stdout)")
     var output: String?
 
@@ -63,7 +66,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
 
     @Option(
         name: [.customLong("workers"), .customLong("jobs")],
-        help: "Max parallel Ollama jobs (1-32; default 1; use 10 for cloud batch)"
+        help: "Requested Ollama worker count (1-32; default 1). At most 10 consumers run at once via a producer-consumer queue."
     )
     var workers: Int = 1
 
@@ -84,6 +87,9 @@ struct YankovinatorCLI: AsyncParsableCommand {
 
     @Flag(name: .shortAndLong, help: "Verbose output")
     var verbose: Bool = false
+
+    @Flag(name: .long, help: "Disable stderr progress bar for batch / multi-candidate runs")
+    var noProgress: Bool = false
 
     // Validate options after parsing
     mutating func validate() throws {
@@ -178,6 +184,12 @@ struct YankovinatorCLI: AsyncParsableCommand {
             throw ValidationError(error.description)
         }
 
+        if let timeout = ollamaTimeout {
+            guard timeout >= 30, timeout <= 900 else {
+                throw ValidationError("Ollama timeout must be between 30 and 900 seconds.")
+            }
+        }
+
         ollamaURL = ollamaURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !ollamaURL.isEmpty else {
             throw ValidationError("Ollama URL cannot be empty")
@@ -224,10 +236,21 @@ struct YankovinatorCLI: AsyncParsableCommand {
             print("")
             print("Ollama URL: \(ollamaURL)")
             print("Model: \(model)")
-            print("Workers: \(workers)")
+            print("Workers: \(workers) (consumer pool: \(ParallelJobRunner.consumerPoolSize(requestedWorkers: workers)))")
             print("Candidates: \(candidates)")
+            if let ollamaTimeout {
+                print("Ollama timeout: \(ollamaTimeout)s")
+            } else if model.lowercased().contains("cloud") {
+                print("Ollama timeout: 300s (cloud model default)")
+            }
             print("")
         }
+
+        OllamaClient.applyRuntimePolicy(
+            model: model,
+            workers: ParallelJobRunner.consumerPoolSize(requestedWorkers: workers),
+            timeoutOverride: ollamaTimeout
+        )
 
         let generator = ParodyGenerator(ollamaBaseURL: ollamaURL, ollamaModel: model)
         try await ensureOllamaReady(generator)
@@ -328,6 +351,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
                 keywords: keywordsDict,
                 candidates: candidates,
                 workers: workers,
+                showProgress: !noProgress && candidates > 1,
                 ollamaURL: ollamaURL,
                 ollamaModel: model,
                 refinementPasses: 2
@@ -388,7 +412,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
         let generations = jobs.count * candidates
         if verbose {
             print("Batch mode (\(label)): \(jobs.count) base job(s) × \(candidates) candidate(s) = \(generations) generation(s)")
-            print("Workers: \(workers)")
+            print("Workers: \(workers) (consumer pool: \(ParallelJobRunner.consumerPoolSize(requestedWorkers: workers)))")
             for job in jobs.prefix(20) {
                 let themeNote = job.themeId.map { " theme=\($0)" } ?? ""
                 print("  • \(job.id)\(themeNote) → \(job.outputPath)")
@@ -416,9 +440,12 @@ struct YankovinatorCLI: AsyncParsableCommand {
             }
         }
 
+        let showProgress = !noProgress && generations > 1
         let scored: [ScoredExpansion] = try await ParallelJobRunner.map(
             items: expanded,
             workers: workers,
+            showProgress: showProgress,
+            progressLabel: "Generations",
             progress: { completed, total in
                 if verbose {
                     Task { await log.printLine("Generations completed: \(completed)/\(total)") }

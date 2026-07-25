@@ -63,6 +63,42 @@ final class ParallelJobRunnerTests: XCTestCase {
 
     func testRecommendedCloudWorkersIsTen() {
         XCTAssertEqual(ParallelJobRunner.recommendedCloudWorkers, 10)
+        XCTAssertEqual(ParallelJobRunner.maxConcurrentConsumers, 10)
+    }
+
+    func testConsumerPoolSizeCapsAtTen() {
+        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 1), 1)
+        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 10), 10)
+        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 32), 10)
+    }
+
+    func testMapNeverExceedsTenConcurrentConsumers() async throws {
+        actor Counter {
+            var inFlight = 0
+            var peak = 0
+            func enter() {
+                inFlight += 1
+                peak = max(peak, inFlight)
+            }
+            func leave() {
+                inFlight -= 1
+            }
+            func peakValue() -> Int { peak }
+        }
+
+        let counter = Counter()
+        let items = Array(0..<40)
+
+        _ = try await ParallelJobRunner.map(items: items, workers: 32) { _ in
+            await counter.enter()
+            try await Task.sleep(nanoseconds: 15_000_000)
+            await counter.leave()
+            return true
+        }
+
+        let peak = await counter.peakValue()
+        XCTAssertLessThanOrEqual(peak, ParallelJobRunner.maxConcurrentConsumers)
+        XCTAssertGreaterThan(peak, 1)
     }
 
     func testBatchJobBuilderDiscoversTxtFiles() throws {

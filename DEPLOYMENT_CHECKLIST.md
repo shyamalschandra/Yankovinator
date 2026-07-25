@@ -1,15 +1,16 @@
 > **Current status (2026):** Yankovinator ships with **Ollama** (`llama3.2:3b`), not Apple Foundation Models. Use [README.md](README.md) and [QUICK_START.md](QUICK_START.md) for accurate instructions.
 
-# Deployment Checklist (v1.04 / Ollama)
+# Deployment Checklist (v1.04.1 / Ollama)
 
 ## Pre-release
 
 - [x] Source builds: `swift build` / `swift build -c release`
 - [x] XCTest suite green with Xcode developer dir (`swift test`)
+- [x] Certification battery: `./scripts/certification-battery.sh`
 - [x] CLI help works: `yankovinator`, `keyword-generator`, `benchmark`
-- [x] Parallel workers verified (`--workers` / `--input-dir` batch)
-- [x] Combinatorial songs×themes verified (`--themes-dir`)
-- [x] Multi-candidate ranking verified (`--candidates 10`)
+- [x] Producer–consumer pool (max 10 consumers) + progress bar (`--no-progress`)
+- [x] Cloud Ollama retries / `--ollama-timeout`
+- [x] Combinatorial songs×themes×candidates verified
 - [x] Ollama integration verified with `llama3.2:3b`
 - [x] Sample data present: `data/example_lyrics.txt`, `data/example_keywords.txt`
 - [x] Docs aligned with Ollama (README, QUICK_START, `docs/`)
@@ -19,14 +20,14 @@
 ## Release steps
 
 ```bash
-git tag -a v1.04 -m "Release v1.04"
-git push origin v1.04
+git tag -a v1.04.1 -m "Release v1.04.1"
+git push origin v1.04.1
 ```
 
 After assets publish:
 
 1. Verify release archives + `.sha256` files
-2. Update Homebrew tap formula version + SHA256 (`./update-homebrew-tap.sh 1.04`)
+2. Update Homebrew tap formula version + SHA256 (`./update-homebrew-tap.sh 1.04.1`)
 3. Confirm Pages site: https://shyamalschandra.github.io/Yankovinator/
 
 ## Post-release smoke
@@ -42,4 +43,4 @@ yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
 
 - Effective generations = songs × themes × candidates
 - Above 100 generations requires `--force`
-- `--workers` caps total concurrent Ollama generations across the flattened expansion
+- `--workers` requests parallelism; at most **10 consumer workers** run at once (producer–consumer queue)
