@@ -53,8 +53,8 @@ struct YankovinatorCLI: AsyncParsableCommand {
     var ollamaTimeout: Int?
 
     @Option(
-        name: .long,
-        help: "Ollama server OLLAMA_NUM_PARALLEL (docs.ollama.com/faq). Default: env OLLAMA_NUM_PARALLEL on localhost; caps consumers."
+        name: [.long, .customLong("ollama-num-workers")],
+        help: "Ollama server OLLAMA_NUM_PARALLEL (docs.ollama.com/faq). Default: env OLLAMA_NUM_PARALLEL on localhost; caps consumers. Alias: --ollama-num-workers."
     )
     var ollamaNumParallel: Int?
 
@@ -168,6 +168,21 @@ struct YankovinatorCLI: AsyncParsableCommand {
         }
 
         if hasFile && hasSongsDir {
+            if let file = lyricsFile, file.allSatisfy(\.isNumber) {
+                throw ValidationError("""
+                Use either a lyrics file or --input-dir, not both.
+                The extra argument "\(file)" is being treated as a lyrics file. That often happens when an unknown \
+                long option is followed by a number (e.g. --ollama-num-workers \(file)).
+                Use --ollama-num-parallel \(file) (or --workers \(file) for job pool size) instead.
+                """)
+            }
+            if let file = lyricsFile, file.hasPrefix("-") {
+                throw ValidationError("""
+                Use either a lyrics file or --input-dir, not both.
+                "\(file)" looks like a mistyped option, not a lyrics path. Check flag spelling (e.g. \
+                --ollama-num-parallel or --ollama-num-workers).
+                """)
+            }
             throw ValidationError("Use either a lyrics file or --input-dir, not both.")
         }
 

@@ -44,11 +44,11 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.3**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.4**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.3/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.4/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/
@@ -139,7 +139,7 @@ swift run yankovinator <lyrics-file> [options]
 - `--themes-dir <dir>`: Directory of theme keyword `.txt` files; with `--input-dir` runs **every song × every theme**
 - `--output-dir <dir>`: Output directory for batch mode (`<song>.parody.txt`, or `<theme>/<song>.parody.txt` for cross-product)
 - `--workers, --jobs <n>`: Requested worker count (1–32). Consumer pool = min(workers, 10, `OLLAMA_NUM_PARALLEL` on localhost).
-- `--ollama-num-parallel <n>`: Ollama server `OLLAMA_NUM_PARALLEL` (or set env before `ollama serve`; see [Ollama FAQ](https://docs.ollama.com/faq)).
+- `--ollama-num-parallel <n>` (alias `--ollama-num-workers`): Ollama server `OLLAMA_NUM_PARALLEL` (or set env before `ollama serve`; see [Ollama FAQ](https://docs.ollama.com/faq)).
 - `--candidates <n>`: Generate N ranked variants per song×theme (1–32; use `10` for combinatorial ranking)
 - `--keep-candidates`: Also write ranked variants under `<song>.candidates/`
 - `--force`: Allow songs×themes×candidates totals larger than 100 generations

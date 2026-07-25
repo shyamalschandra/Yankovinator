@@ -35,6 +35,7 @@ H=$($Y --help 2>&1)
 echo "$H" | rg -q "no-progress" && ok "help: no-progress" || bad "help: no-progress" ""
 echo "$H" | rg -q "consumer" && ok "help: consumer pool note" || bad "help: consumer pool note" ""
 echo "$H" | rg -q "ollama-num-parallel|OLLAMA_NUM_PARALLEL" && ok "help: ollama-num-parallel" || bad "help: ollama-num-parallel" ""
+echo "$H" | rg -q "ollama-num-workers" && ok "help: ollama-num-workers alias" || bad "help: ollama-num-workers alias" ""
 echo "$H" | rg -q "ollama-timeout" && ok "help: ollama-timeout" || bad "help: ollama-timeout" ""
 echo "$H" | rg -q "candidates" && ok "help: candidates" || bad "help: candidates" ""
 
@@ -45,6 +46,11 @@ COUT=$($Y data/example_lyrics.txt --candidates 0 2>&1 || true)
 if echo "$COUT" | rg -qi "Candidates must"; then ok "candidates=0 rejected"; else bad "candidates=0 rejected" "$COUT"; fi
 IOUT=$($Y --input-dir "/tmp/nonexistent-yank-empty-$$" --output-dir "/tmp/out-$$" 2>&1 || true)
 if echo "$IOUT" | rg -qi "No \\.txt lyrics files found in input directory"; then ok "bad input-dir"; else bad "bad input-dir" "$IOUT"; fi
+ALIAS_DIR=$(mktemp -d)
+mkdir -p "$ALIAS_DIR/s" "$ALIAS_DIR/t" "$ALIAS_DIR/o"
+ALIAS=$($Y --input-dir "$ALIAS_DIR/s" --themes-dir "$ALIAS_DIR/t" --output-dir "$ALIAS_DIR/o" --ollama-num-workers 10 --force 2>&1 || true)
+if echo "$ALIAS" | rg -qi "No \\.txt lyrics files found in input directory"; then ok "ollama-num-workers alias batch"; else bad "ollama-num-workers alias batch" "$ALIAS"; fi
+rm -rf "$ALIAS_DIR"
 
 echo "======== 6) npm / TS site ========"
 npm run build && ok "npm run build" || bad "npm run build" ""
