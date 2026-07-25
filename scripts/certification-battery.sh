@@ -34,6 +34,7 @@ echo "======== 4) Help content (new flags) ========"
 H=$($Y --help 2>&1)
 echo "$H" | rg -q "no-progress" && ok "help: no-progress" || bad "help: no-progress" ""
 echo "$H" | rg -q "midi-progress" && ok "help: midi-progress" || bad "help: midi-progress" ""
+echo "$H" | rg -q "no-cloud-prescription" && ok "help: no-cloud-prescription" || bad "help: no-cloud-prescription" ""
 echo "$H" | rg -q "consumer" && ok "help: consumer pool note" || bad "help: consumer pool note" ""
 echo "$H" | rg -q "ollama-num-parallel|OLLAMA_NUM_PARALLEL" && ok "help: ollama-num-parallel" || bad "help: ollama-num-parallel" ""
 echo "$H" | rg -q "ollama-num-workers" && ok "help: ollama-num-workers alias" || bad "help: ollama-num-workers alias" ""

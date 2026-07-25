@@ -100,6 +100,9 @@ struct YankovinatorCLI: AsyncParsableCommand {
     @Flag(name: .long, help: "Play lightweight MIDI cues per worker progress bar (interactive terminal only)")
     var midiProgress: Bool = false
 
+    @Flag(name: .long, help: "Disable auto cloud batch prescription (worker cap, timeout, fast coherence)")
+    var noCloudPrescription: Bool = false
+
     // Validate options after parsing
     mutating func validate() throws {
         if let file = lyricsFile {
@@ -263,10 +266,12 @@ struct YankovinatorCLI: AsyncParsableCommand {
         return OllamaParallelPolicy.serverNumParallelFromEnvironment()
     }
 
-    private func consumerPoolSize() -> Int {
+    private func consumerPoolSize(effectiveRequestedWorkers: Int? = nil) -> Int {
         ParallelJobRunner.consumerPoolSize(
-            requestedWorkers: workers,
-            ollamaNumParallel: resolvedOllamaNumParallel()
+            requestedWorkers: effectiveRequestedWorkers ?? workers,
+            ollamaNumParallel: resolvedOllamaNumParallel(),
+            model: model,
+            applyCloudPrescription: !noCloudPrescription && effectiveRequestedWorkers == nil
         )
     }
 
@@ -293,7 +298,8 @@ struct YankovinatorCLI: AsyncParsableCommand {
             if let ollamaTimeout {
                 print("Ollama timeout: \(ollamaTimeout)s")
             } else if model.lowercased().contains("cloud") {
-                print("Ollama timeout: 300s (cloud model default)")
+                let heavy = CloudBatchPrescription.isHeavyCloudModel(model)
+                print("Ollama timeout: \(heavy ? CloudBatchPrescription.heavyCloudTimeoutSeconds : 300)s (cloud model default)")
             }
             print("")
         }
@@ -507,8 +513,24 @@ struct YankovinatorCLI: AsyncParsableCommand {
         // Touch shared dictionary once (background load) instead of per worker.
         _ = OEDDictionary.shared
 
+        let rx = CloudBatchPrescription.plan(
+            model: model,
+            requestedWorkers: workers,
+            ollamaTimeout: ollamaTimeout,
+            enabled: !noCloudPrescription
+        )
+        CloudBatchPrescription.printPlan(rx)
+        if let timeout = rx.appliedTimeoutSeconds {
+            OllamaClient.applyRuntimePolicy(
+                model: model,
+                workers: rx.effectiveWorkers,
+                ollamaNumParallel: resolvedOllamaNumParallel(),
+                timeoutOverride: timeout
+            )
+        }
+
         let showProgress = !noProgress && generations > 1
-        let poolSize = consumerPoolSize()
+        let poolSize = consumerPoolSize(effectiveRequestedWorkers: rx.effectiveWorkers)
         let serverParallel = resolvedOllamaNumParallel()
         let progressHandle: CLIWorkerPoolProgress? =
             (showProgress && TerminalProgress.isInteractive && poolSize > 1)
@@ -526,14 +548,17 @@ struct YankovinatorCLI: AsyncParsableCommand {
         }
 
         let useTUIStatus = progressHandle != nil
+        let skipLLMCoherence = rx.skipLLMCoherenceInBatch
         let scored: [ScoredExpansion] = try await ParallelJobRunner.map(
             items: expanded,
-            workers: workers,
+            workers: rx.effectiveWorkers,
             showProgress: showProgress,
             progressLabel: "Generations",
             ollamaNumParallel: serverParallel,
             progressHandle: progressHandle,
             enableMIDIProgress: midiProgress,
+            model: model,
+            applyCloudPrescription: false,
             progress: { completed, total in
                 if verbose {
                     if useTUIStatus {
@@ -575,10 +600,24 @@ struct YankovinatorCLI: AsyncParsableCommand {
                 }
             }
 
-            let generator = ParodyGenerator(ollamaBaseURL: ollamaURL, ollamaModel: model)
+            let generator = ParodyGenerator(
+                ollamaBaseURL: ollamaURL,
+                ollamaModel: model,
+                skipLLMCoherenceCritic: skipLLMCoherence
+            )
             let parodyLines = try await generator.generateParody(
                 originalLyrics: lyrics,
                 keywords: keywordsDict,
+                progressCallback: { line, total in
+                    guard useTUIStatus, let ctx = WorkerJobContext.current else { return }
+                    Task {
+                        await progressHandle?.postWorkerLineProgress(
+                            workerID: ctx.workerID,
+                            line: line,
+                            total: total
+                        )
+                    }
+                },
                 refinementPasses: 2,
                 verbose: false
             )

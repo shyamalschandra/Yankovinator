@@ -170,7 +170,7 @@ public actor CLIProgressBar {
 public actor CLIWorkerPoolProgress {
     private enum Slot: Sendable {
         case idle
-        case working(jobNumber: Int, tick: Int, startedAt: Date)
+        case working(jobNumber: Int, tick: Int, startedAt: Date, line: Int?, lineTotal: Int?)
     }
 
     private let total: Int
@@ -237,16 +237,30 @@ public actor CLIWorkerPoolProgress {
 
     public func beginJob(workerID: Int, jobNumber: Int) {
         guard !finished, workerID >= 0, workerID < workerCount else { return }
-        slots[workerID] = .working(jobNumber: jobNumber, tick: animationTick, startedAt: Date())
+        slots[workerID] = .working(jobNumber: jobNumber, tick: animationTick, startedAt: Date(), line: nil, lineTotal: nil)
         if let midi {
             Task { await midi.playWorkerStart(workerID: workerID) }
         }
         Task { await refresh.scheduleRedraw() }
     }
 
+    /// Live line counter while a worker generates a song (cheap TUI update, coalesced redraw).
+    public func postWorkerLineProgress(workerID: Int, line: Int, total: Int) {
+        guard !finished, workerID >= 0, workerID < workerCount else { return }
+        guard case .working(let jobNumber, let tick, let startedAt, _, _) = slots[workerID] else { return }
+        slots[workerID] = .working(
+            jobNumber: jobNumber,
+            tick: tick,
+            startedAt: startedAt,
+            line: line,
+            lineTotal: total
+        )
+        Task { await refresh.scheduleRedraw() }
+    }
+
     public func completeJob(workerID: Int) {
         guard !finished, workerID >= 0, workerID < workerCount else { return }
-        if case .working(_, _, let startedAt) = slots[workerID] {
+        if case .working(_, _, let startedAt, _, _) = slots[workerID] {
             recordJobFinished(workerID: workerID, duration: Date().timeIntervalSince(startedAt))
         }
         slots[workerID] = .idle
@@ -316,12 +330,14 @@ public actor CLIWorkerPoolProgress {
             switch slot {
             case .idle:
                 return .idle(spentSeconds: spent, etaSeconds: remaining)
-            case .working(let jobNumber, let tick, _):
+            case .working(let jobNumber, let tick, _, let line, let lineTotal):
                 return .working(
                     jobNumber: jobNumber,
                     tick: tick,
                     spentSeconds: spent,
-                    etaSeconds: remaining
+                    etaSeconds: remaining,
+                    line: line,
+                    lineTotal: lineTotal
                 )
             }
         }
@@ -349,7 +365,7 @@ public actor CLIWorkerPoolProgress {
 
     private func spentSeconds(workerID: Int, slot: Slot, now: Date) -> TimeInterval {
         var total = workerBusySeconds[workerID]
-        if case .working(_, _, let startedAt) = slot {
+        if case .working(_, _, let startedAt, _, _) = slot {
             total += max(0, now.timeIntervalSince(startedAt))
         }
         return total
@@ -366,7 +382,7 @@ public actor CLIWorkerPoolProgress {
         switch slot {
         case .idle:
             return queueShare
-        case .working(_, _, let startedAt):
+        case .working(_, _, let startedAt, _, _):
             let elapsed = max(0, now.timeIntervalSince(startedAt))
             let currentJobLeft = max(0, avg - elapsed)
             let futureJobs = max(0, Double(jobsLeft - 1) / Double(workerCount)) * avg
@@ -390,7 +406,14 @@ public actor CLIWorkerPoolProgress {
 enum CLIProgressFormatting {
     enum WorkerSlot: Equatable {
         case idle(spentSeconds: TimeInterval, etaSeconds: TimeInterval?)
-        case working(jobNumber: Int, tick: Int, spentSeconds: TimeInterval, etaSeconds: TimeInterval?)
+        case working(
+            jobNumber: Int,
+            tick: Int,
+            spentSeconds: TimeInterval,
+            etaSeconds: TimeInterval?,
+            line: Int? = nil,
+            lineTotal: Int? = nil
+        )
     }
 
     static func formatDuration(_ seconds: TimeInterval) -> String {
@@ -510,10 +533,14 @@ enum CLIProgressFormatting {
                 let state = theme.wrap("\(stateEmoji)idle", ANSI.dim)
                 let timing = workerTimingLabel(spent: spent, eta: eta, theme: theme)
                 lines.append("│ \(workerLabel) \(boxAround(bar, theme: theme)) \(state)  \(timing)")
-            case .working(let jobNumber, let slotTick, let spent, let eta):
+            case .working(let jobNumber, let slotTick, let spent, let eta, let line, let lineTotal):
                 let bar = unicodeIndeterminateBar(tick: slotTick + tick, width: workerBarWidth, theme: theme)
                 let stateEmoji = theme.useEmoji ? "⚡ " : ""
-                let state = theme.wrap("\(stateEmoji)#\(jobNumber)", ANSI.fgYellow)
+                var state = theme.wrap("\(stateEmoji)#\(jobNumber)", ANSI.fgYellow)
+                if let line, let lineTotal, lineTotal > 0 {
+                    let lineLabel = theme.wrap(" L\(line)/\(lineTotal)", ANSI.fgCyan)
+                    state += lineLabel
+                }
                 let timing = workerTimingLabel(spent: spent, eta: eta, theme: theme)
                 lines.append("│ \(workerLabel) \(boxAround(bar, theme: theme)) \(state)  \(timing)")
             }

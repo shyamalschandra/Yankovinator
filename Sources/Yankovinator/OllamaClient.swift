@@ -63,9 +63,11 @@ public class OllamaClient {
             surpriseTimeoutSeconds = max(45, timeout / 2)
             keywordsTimeoutSeconds = timeout
         } else if model.lowercased().contains("cloud") {
-            generateTimeoutSeconds = 300
-            surpriseTimeoutSeconds = 120
-            keywordsTimeoutSeconds = 300
+            generateTimeoutSeconds = CloudBatchPrescription.isHeavyCloudModel(model)
+                ? CloudBatchPrescription.heavyCloudTimeoutSeconds
+                : 300
+            surpriseTimeoutSeconds = CloudBatchPrescription.isHeavyCloudModel(model) ? 150 : 120
+            keywordsTimeoutSeconds = generateTimeoutSeconds
         } else {
             generateTimeoutSeconds = 180
             surpriseTimeoutSeconds = 90

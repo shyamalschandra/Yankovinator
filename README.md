@@ -44,11 +44,11 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.5**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.6**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.5/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.6/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/
@@ -143,9 +143,10 @@ swift run yankovinator <lyrics-file> [options]
 - `--candidates <n>`: Generate N ranked variants per song×theme (1–32; use `10` for combinatorial ranking)
 - `--keep-candidates`: Also write ranked variants under `<song>.candidates/`
 - `--force`: Allow songs×themes×candidates totals larger than 100 generations
-- `--ollama-timeout <sec>`: Per-request Ollama HTTP timeout (30–900; cloud models default to 300s)
+- `--ollama-timeout <sec>`: Per-request Ollama HTTP timeout (30–900; heavy `:cloud` models default to 600s)
 - `--no-progress`: Disable stderr progress bar for batch / multi-candidate runs
 - `--midi-progress`: Lightweight MIDI cues per worker bar (macOS, interactive terminal only)
+- `--no-cloud-prescription`: Disable auto tuning for heavy `:cloud` models (worker cap, 600s timeout, fast batch coherence)
 - `--analyze, -a`: Show syllable analysis
 - `--verbose, -v`: Verbose output
 
@@ -173,6 +174,8 @@ ollama serve
 ```
 
 The CLI reads `$OLLAMA_NUM_PARALLEL` on `localhost` or you can pass `--ollama-num-parallel 10`.
+
+**Heavy cloud batch (`qwen3.5:397b-cloud`, etc.):** by default Yankovinator prints a **prescription** on stderr: consumer pool capped at **4**, **600s** request timeout, per-line `L12/48` on worker rows, and no extra Ollama call per line for coherence scoring. Override with `--no-cloud-prescription` (keep `--workers 10` at your own queue risk).
 
 **Parallel batch (10 workers on cloud Ollama):**
 

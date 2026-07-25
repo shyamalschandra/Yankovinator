@@ -21,19 +21,21 @@ public class ParodyGenerator {
     ///   - dictionaryPath: Optional path to dictionary file
     ///   - useDictionary: Whether to use OED dictionary for better word choices (default: true)
     ///   - useUnsupervisedNLP: Enable embedding substitution, rhyme clustering, coherence critic (default: true)
+    ///   - skipLLMCoherenceCritic: Batch mode — local embedding critic only (no extra Ollama surprise probes)
     public init(
         ollamaBaseURL: String = "http://localhost:11434",
         ollamaModel: String = "llama3.2:3b",
         dictionaryPath: String? = nil,
         useDictionary: Bool = true,
-        useUnsupervisedNLP: Bool = true
+        useUnsupervisedNLP: Bool = true,
+        skipLLMCoherenceCritic: Bool = false
     ) {
         let client = OllamaClient(baseURL: ollamaBaseURL, model: ollamaModel)
         self.ollamaClient = client
         self.syllableCounter = SyllableCounter.self
         self.lexicalSubstitution = LexicalSubstitutionEngine()
         self.rhymeClustering = UnsupervisedRhymeClustering()
-        self.coherenceCritic = CoherenceCritic(ollamaClient: client)
+        self.coherenceCritic = CoherenceCritic(ollamaClient: skipLLMCoherenceCritic ? nil : client)
         self.useUnsupervisedNLP = useUnsupervisedNLP
         
         // Initialize dictionary if requested (shared instance — avoids N× download/parse in batch workers).

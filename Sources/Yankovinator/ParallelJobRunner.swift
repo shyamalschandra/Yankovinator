@@ -22,8 +22,17 @@ public enum ParallelJobRunner {
 
     /// Effective consumer count: at most `maxConcurrentConsumers` workers run at once.
     /// When `ollamaNumParallel` is set (Ollama server `OLLAMA_NUM_PARALLEL`), consumers are capped to match.
-    public static func consumerPoolSize(requestedWorkers: Int, ollamaNumParallel: Int? = nil) -> Int {
-        let base = min(clampWorkers(requestedWorkers), maxConcurrentConsumers)
+    public static func consumerPoolSize(
+        requestedWorkers: Int,
+        ollamaNumParallel: Int? = nil,
+        model: String? = nil,
+        applyCloudPrescription: Bool = true
+    ) -> Int {
+        var requested = clampWorkers(requestedWorkers)
+        if applyCloudPrescription, let model, CloudBatchPrescription.isHeavyCloudModel(model) {
+            requested = min(requested, CloudBatchPrescription.heavyCloudMaxConsumers)
+        }
+        let base = min(requested, maxConcurrentConsumers)
         guard let ollamaNumParallel, ollamaNumParallel >= 1 else { return base }
         return min(base, ollamaNumParallel)
     }
@@ -66,12 +75,19 @@ public enum ParallelJobRunner {
         ollamaNumParallel: Int? = nil,
         progressHandle: CLIWorkerPoolProgress? = nil,
         enableMIDIProgress: Bool = false,
+        model: String? = nil,
+        applyCloudPrescription: Bool = true,
         progress: (@Sendable (Int, Int) -> Void)? = nil,
         operation: @escaping @Sendable (Item) async throws -> Result
     ) async throws -> [Result] {
         guard !items.isEmpty else { return [] }
 
-        let poolSize = consumerPoolSize(requestedWorkers: workers, ollamaNumParallel: ollamaNumParallel)
+        let poolSize = consumerPoolSize(
+            requestedWorkers: workers,
+            ollamaNumParallel: ollamaNumParallel,
+            model: model,
+            applyCloudPrescription: applyCloudPrescription
+        )
         let showUI = showProgress && TerminalProgress.isInteractive && items.count > 1
         let simpleBar: CLIProgressBar? = (showUI && poolSize == 1)
             ? CLIProgressBar(total: items.count, label: progressLabel, enableMIDI: enableMIDIProgress)
@@ -137,7 +153,11 @@ public enum ParallelJobRunner {
                             await workerPool.beginJob(workerID: workerID, jobNumber: index + 1)
                             await workerPool.postMessage("W\(String(format: "%02d", workerID + 1)) → job #\(index + 1)")
                         }
-                        let value = try await operation(item)
+                        let value = try await WorkerJobContext.$current.withValue(
+                            WorkerJobContext.State(workerID: workerID, jobNumber: index + 1)
+                        ) {
+                            try await operation(item)
+                        }
                         await store.put(index: index, value: value)
                         let (done, total) = await counter.increment()
                         progress?(done, total)
