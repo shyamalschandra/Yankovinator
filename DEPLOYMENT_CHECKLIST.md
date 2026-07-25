@@ -1,6 +1,6 @@
 > **Current status (2026):** Yankovinator ships with **Ollama** (`llama3.2:3b`), not Apple Foundation Models. Use [README.md](README.md) and [QUICK_START.md](QUICK_START.md) for accurate instructions.
 
-# Deployment Checklist (v1.04.7 / Ollama)
+# Deployment Checklist (v1.04.8 / Ollama)
 
 ## Pre-release
 

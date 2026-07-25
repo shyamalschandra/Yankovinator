@@ -351,20 +351,13 @@ public class OllamaClient {
             throw OllamaError.invalidURL
         }
         
-        // Build request body - Ollama expects specific format
-        var requestBody: [String: Any] = [
-            "model": model,
-            "prompt": prompt,
-            "stream": false
-        ]
-        
         // Add options - Ollama API format
         let options: [String: Any] = [
             "temperature": 0.8,
             "top_p": 0.9,
             "num_predict": 100
         ]
-        requestBody["options"] = options
+        let requestBody = Self.ollamaGenerateRequestBody(model: model, prompt: prompt, options: options)
         
         let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
         
@@ -457,34 +450,51 @@ public class OllamaClient {
             throw OllamaError.invalidResponse
         }
         
+        return try Self.parseParodyLineFromGenerateJSON(json)
+    }
+
+    /// Request body for `/api/generate`. `think: false` avoids empty `response` on thinking models (e.g. deepseek-v4-pro:cloud).
+    static func ollamaGenerateRequestBody(model: String, prompt: String, options: [String: Any]) -> [String: Any] {
+        [
+            "model": model,
+            "prompt": prompt,
+            "stream": false,
+            "think": false,
+            "options": options
+        ]
+    }
+
+    /// Strip wrapping quotes from a single-line model output.
+    static func cleanLineResponse(_ responseText: String) -> String {
+        var cleaned = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if cleaned.hasPrefix("\"") && cleaned.hasSuffix("\"") && cleaned.count > 1 {
+            cleaned = String(cleaned.dropFirst().dropLast())
+        }
+
+        if cleaned.hasPrefix("'") && cleaned.hasSuffix("'") && cleaned.count > 1 {
+            let middle = String(cleaned.dropFirst().dropLast())
+            if !middle.contains("'") {
+                cleaned = middle
+            }
+        }
+
+        return cleaned
+    }
+
+    /// Parse `/api/generate` JSON into one parody line; rejects empty `response` (common when thinking models omit `think: false`).
+    static func parseParodyLineFromGenerateJSON(_ json: [String: Any]) throws -> String {
         guard let responseText = json["response"] as? String else {
-            // If no response field, try to get error
             if let error = json["error"] as? String {
                 throw OllamaError.httpError(statusCode: 500, message: ": \(error)")
             }
             throw OllamaError.invalidResponse
         }
-        
-        // Clean up the response - remove wrapping quotes, preserve apostrophes in contractions
-        var cleaned = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // Remove wrapping double quotes only (at start/end)
-        if cleaned.hasPrefix("\"") && cleaned.hasSuffix("\"") && cleaned.count > 1 {
-            cleaned = String(cleaned.dropFirst().dropLast())
+
+        let cleaned = cleanLineResponse(responseText)
+        guard !cleaned.isEmpty else {
+            throw OllamaError.emptyGenerateResponse
         }
-        
-        // For single quotes, only remove if they're clearly wrapping quotes (not contractions)
-        // A wrapping single quote would be at both ends with no apostrophes in between
-        // We check if there are any apostrophes in the middle that would indicate contractions
-        if cleaned.hasPrefix("'") && cleaned.hasSuffix("'") && cleaned.count > 1 {
-            let middle = String(cleaned.dropFirst().dropLast())
-            // Only remove if there are no apostrophes in the middle (indicating it's a wrapping quote, not contractions)
-            if !middle.contains("'") {
-                cleaned = middle
-            }
-            // If there are apostrophes in the middle, keep them (they're contractions)
-        }
-        
         return cleaned
     }
 
@@ -523,16 +533,15 @@ public class OllamaClient {
             throw OllamaError.invalidURL
         }
 
-        let requestBody: [String: Any] = [
-            "model": model,
-            "prompt": prompt,
-            "stream": false,
-            "options": [
+        let requestBody = Self.ollamaGenerateRequestBody(
+            model: model,
+            prompt: prompt,
+            options: [
                 "temperature": 0.0,
                 "top_p": 0.1,
                 "num_predict": 8
             ]
-        ]
+        )
 
         let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
         let response: HTTPClientResponse
@@ -671,18 +680,12 @@ public class OllamaClient {
             throw OllamaError.invalidURL
         }
         
-        var requestBody: [String: Any] = [
-            "model": model,
-            "prompt": prompt,
-            "stream": false
-        ]
-        
         let options: [String: Any] = [
             "temperature": 0.7,
             "top_p": 0.9,
             "num_predict": 500
         ]
-        requestBody["options"] = options
+        let requestBody = Self.ollamaGenerateRequestBody(model: model, prompt: prompt, options: options)
         
         let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
         
@@ -780,6 +783,7 @@ public enum OllamaError: Error, CustomStringConvertible {
     case invalidURL
     case httpError(statusCode: Int, message: String = "")
     case invalidResponse
+    case emptyGenerateResponse
     case networkError(Error)
     case modelNotFound(model: String)
     
@@ -791,6 +795,12 @@ public enum OllamaError: Error, CustomStringConvertible {
             return "HTTP error \(statusCode)\(message)"
         case .invalidResponse:
             return "Invalid response from Ollama API"
+        case .emptyGenerateResponse:
+            return """
+            Ollama returned an empty line (no text in the `response` field). \
+            Thinking models such as deepseek-v4-pro:cloud often put tokens into `thinking` instead. \
+            Yankovinator sends `think: false` on generate requests; if you still see this, retry or use a non-thinking model.
+            """
         case .networkError(let error):
             // Provide more detailed error information for AsyncHTTPClient errors
             let errorString = String(describing: error)
