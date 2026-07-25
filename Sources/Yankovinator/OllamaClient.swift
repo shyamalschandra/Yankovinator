@@ -199,6 +199,7 @@ public class OllamaClient {
         rhymeScheme: String? = nil,
         wordSyllablePattern: String? = nil,
         wordSyllables: [Int]? = nil,
+        wordPartOfSpeechPattern: String? = nil,
         usedWords: Set<String> = [],
         wordSuggestions: [[(word: String, definition: String)]] = []
     ) async throws -> String {
@@ -217,6 +218,26 @@ public class OllamaClient {
             The syllable pattern must be: \(wordSylls.map { String($0) }.joined(separator: "-"))
             """
         }
+
+        var partOfSpeechInstructions = ""
+        if let posPattern = wordPartOfSpeechPattern, !posPattern.isEmpty {
+            partOfSpeechInstructions = """
+
+            CRITICAL: Word-by-word part-of-speech matching (same grammatical slot as the original):
+            Original POS pattern: \(posPattern)
+            Each word in your parody MUST match the part of speech of the corresponding original word (noun→noun, verb→verb, adjective→adjective, etc.).
+            Do not turn verbs into nouns or adjectives into adverbs unless the original word is the same class.
+            """
+        }
+
+        let comedyAndOEDInstructions = """
+
+        PARODY COMEDY & UNABRIDGED OED ENGLISH:
+        - Write a PARODY with genuine comedic value: wit, ironic twist, exaggeration, or surprise—but the line must still read clearly.
+        - Word choices must make sense in context and sound like deliberate lyric writing, not random tokens.
+        - Prefer dictionary-defensible senses from the 1913 Oxford/Webster's Unabridged suggestions when provided (standard literary English usage).
+        - Humor should come from theme juxtaposition and clever substitution, not from breaking grammar or nonsense words.
+        """
         
         // Build rhyming instructions
         var rhymingInstructions = ""
@@ -276,7 +297,7 @@ public class OllamaClient {
             for (index, suggestions) in wordSuggestions.enumerated() {
                 if !suggestions.isEmpty {
                     let syllableCount = wordSyllables?[index] ?? 0
-                    dictionarySuggestions += "\n   Position \(index + 1) (\(syllableCount) syllables):"
+                    dictionarySuggestions += "\n   Position \(index + 1) (\(syllableCount) syllables; keep same part of speech as original):"
                     for suggestion in suggestions.prefix(5) {
                         dictionarySuggestions += "\n     - \(suggestion.word): \(suggestion.definition)"
                     }
@@ -326,7 +347,7 @@ public class OllamaClient {
                - Make the theme central to the line's semantic content, not just mentioned
             3. Maintains the rhythm and style of the original: "\(originalLine)"
             4. Preserves punctuation style similar to the original
-            5. Is creative, humorous, and appropriate\(rhymingInstructions)\(inlineRhymeInstructions)\(wordAvoidanceInstructions)\(dictionarySuggestions)
+            5. Is creative, humorous, and appropriate\(rhymingInstructions)\(inlineRhymeInstructions)\(wordAvoidanceInstructions)\(dictionarySuggestions)\(partOfSpeechInstructions)\(comedyAndOEDInstructions)
             
             CRITICAL QUALITY REQUIREMENTS:
             - The line must make COGENT SENSE - it must be grammatically correct and semantically meaningful

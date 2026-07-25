@@ -22,6 +22,9 @@ public struct DictionaryEntry: Sendable {
 /// OEDDictionary provides word lookup and suggestions using the 1913 Oxford/Webster's Dictionary.
 /// Thread-safe: background load cannot race with generation-time lookups.
 public final class OEDDictionary: @unchecked Sendable {
+    private static let maxSynonymScan = 4_000
+    private static let maxSuggestionScan = 12_000
+
     private var wordIndex: [String: DictionaryEntry] = [:]
     private var wordList: [String] = []
     private let lock = NSLock()
@@ -197,7 +200,7 @@ public final class OEDDictionary: @unchecked Sendable {
         let (_, list) = snapshot()
         var candidates: [(word: String, score: Int)] = []
         
-        for candidateWord in list {
+        for candidateWord in list.prefix(Self.maxSynonymScan) {
             if candidateWord == word.lowercased() { continue }
             guard let candidateEntry = lookup(candidateWord) else { continue }
             let candidateTerms = extractKeyTerms(from: candidateEntry.definitions)
@@ -217,15 +220,17 @@ public final class OEDDictionary: @unchecked Sendable {
         var terms: Set<String> = []
         
         for definition in definitions {
-            let tokenizer = NLTokenizer(unit: .word)
-            tokenizer.string = definition
-            
-            tokenizer.enumerateTokens(in: definition.startIndex..<definition.endIndex) { tokenRange, _ in
-                let word = String(definition[tokenRange]).lowercased().filter { $0.isLetter }
-                if word.count > 3 && !isCommonWord(word) {
-                    terms.insert(word)
+            NLConcurrency.synchronized {
+                let tokenizer = NLTokenizer(unit: .word)
+                tokenizer.string = definition
+
+                tokenizer.enumerateTokens(in: definition.startIndex..<definition.endIndex) { tokenRange, _ in
+                    let word = String(definition[tokenRange]).lowercased().filter { $0.isLetter }
+                    if word.count > 3 && !isCommonWord(word) {
+                        terms.insert(word)
+                    }
+                    return true
                 }
-                return true
             }
         }
         
@@ -272,33 +277,68 @@ public final class OEDDictionary: @unchecked Sendable {
         syllableCount: Int,
         theme: [String] = [],
         excludeWords: Set<String> = [],
-        maxResults: Int = 15
+        maxResults: Int = 15,
+        similarTo originalWord: String? = nil,
+        requiredPartOfSpeech: PartOfSpeechTag? = nil
     ) -> [(word: String, definition: String)] {
         let (index, list) = snapshot()
         var suggestions: [(word: String, definition: String, score: Int)] = []
-        
-        for word in list {
+
+        var searchWords = list
+        if let originalWord {
+            let synonyms = findSynonyms(for: originalWord, maxResults: 80)
+            if !synonyms.isEmpty {
+                searchWords = synonyms + list.prefix(Self.maxSuggestionScan)
+            } else {
+                searchWords = Array(list.prefix(Self.maxSuggestionScan))
+            }
+        } else {
+            searchWords = Array(list.prefix(Self.maxSuggestionScan))
+        }
+
+        for word in searchWords {
             if excludeWords.contains(word.lowercased()) { continue }
-            
+
             let syllables = syllableCounter.countSyllablesInLine(word)
-            if syllables == syllableCount {
-                guard let entry = index[word.lowercased()] else { continue }
-                
-                var score = 5
-                if !theme.isEmpty {
-                    let wordDef = entry.definitions.joined(separator: " ").lowercased()
-                    for themeWord in theme {
-                        if wordDef.contains(themeWord.lowercased()) {
-                            score += 10
-                        }
+            if syllables != syllableCount { continue }
+            guard let entry = index[word.lowercased()] else { continue }
+
+            if let requiredPartOfSpeech,
+               !PartOfSpeechTag.matchesOEDTag(entry.partOfSpeech, required: requiredPartOfSpeech) {
+                continue
+            }
+
+            var score = 5
+            if let originalWord, word.lowercased() == originalWord.lowercased().filter({ $0.isLetter }) {
+                score += 8
+            }
+            if !theme.isEmpty {
+                let wordDef = entry.definitions.joined(separator: " ").lowercased()
+                for themeWord in theme {
+                    if wordDef.contains(themeWord.lowercased()) {
+                        score += 10
                     }
                 }
-                
-                let definition = entry.definitions.first ?? "No definition available"
-                suggestions.append((word, definition, score))
             }
+
+            var definition = entry.definitions.first ?? "No definition available"
+            if let pos = entry.partOfSpeech, !pos.isEmpty {
+                definition = "[\(pos)] \(definition)"
+            }
+            suggestions.append((word, definition, score))
         }
-        
+
+        if suggestions.isEmpty, requiredPartOfSpeech != nil {
+            return getWordSuggestions(
+                syllableCount: syllableCount,
+                theme: theme,
+                excludeWords: excludeWords,
+                maxResults: maxResults,
+                similarTo: originalWord,
+                requiredPartOfSpeech: nil
+            )
+        }
+
         return suggestions
             .sorted { $0.score > $1.score }
             .prefix(maxResults)

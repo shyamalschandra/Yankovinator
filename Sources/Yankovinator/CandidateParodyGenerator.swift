@@ -37,11 +37,30 @@ public enum CandidateParodyGenerator {
         }
     }
 
-    /// Score a full parody using unsupervised local coherence (no extra Ollama calls).
+    /// Score a full parody (global objective favors the weakest line).
     public static func scoreParody(
         lines: [String],
         keywords: [String: String],
+        originalLyrics: [String]? = nil,
+        dictionary: OEDDictionary? = nil,
         critic: CoherenceCritic = CoherenceCritic()
+    ) -> Double {
+        guard let originalLyrics, originalLyrics.count == lines.count else {
+            return legacyCoherenceOnly(lines: lines, keywords: keywords, critic: critic)
+        }
+        let summary = ParodyFitScorer.scoreSong(
+            originalLyrics: originalLyrics,
+            parodyLines: lines,
+            keywords: keywords,
+            dictionary: dictionary
+        )
+        return summary.globalScore
+    }
+
+    private static func legacyCoherenceOnly(
+        lines: [String],
+        keywords: [String: String],
+        critic: CoherenceCritic
     ) -> Double {
         var previous: [String] = []
         var total = 0.0
@@ -96,7 +115,7 @@ public enum CandidateParodyGenerator {
                 refinementPasses: refinementPasses,
                 verbose: false
             )
-            let score = scoreParody(lines: lines, keywords: keywords)
+            let score = scoreParody(lines: lines, keywords: keywords, originalLyrics: originalLyrics)
             return ParodyCandidateResult(index: index, lines: lines, score: score)
         }
 

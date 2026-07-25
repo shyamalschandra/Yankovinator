@@ -74,6 +74,12 @@ public struct SyllableCounter {
     /// - Parameter line: The line of text
     /// - Returns: Total syllable count for the line
     public static func countSyllablesInLine(_ line: String) -> Int {
+        NLConcurrency.synchronized {
+            countSyllablesInLineUnsafe(line)
+        }
+    }
+
+    private static func countSyllablesInLineUnsafe(_ line: String) -> Int {
         let tokenizer = NLTokenizer(unit: .word)
         tokenizer.string = line
         
@@ -98,6 +104,12 @@ public struct SyllableCounter {
     /// - Parameter line: The line of text
     /// - Returns: Array of (word, syllableCount) tuples
     public static func analyzeWordSyllables(in line: String) -> [(word: String, syllables: Int)] {
+        NLConcurrency.synchronized {
+            analyzeWordSyllablesUnsafe(in: line)
+        }
+    }
+
+    static func analyzeWordSyllablesUnsafe(in line: String) -> [(word: String, syllables: Int)] {
         let tokenizer = NLTokenizer(unit: .word)
         tokenizer.string = line
         

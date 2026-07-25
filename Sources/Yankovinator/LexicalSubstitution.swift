@@ -47,7 +47,8 @@ public struct LexicalSubstitutionEngine {
         requiredSyllables: Int? = nil,
         excludeWords: Set<String> = [],
         theme: [String] = [],
-        maxResults: Int = 10
+        maxResults: Int = 10,
+        requiredPartOfSpeech: PartOfSpeechTag? = nil
     ) -> [Substitution] {
         let cleaned = normalize(word)
         guard !cleaned.isEmpty else { return [] }
@@ -69,6 +70,13 @@ public struct LexicalSubstitutionEngine {
 
                 let syllables = syllableCounter.countSyllables(in: candidate)
                 guard syllables == targetSyllables else { continue }
+
+                if let requiredPartOfSpeech {
+                    let candidatePOS = PartOfSpeechAnalyzer.tagWord(candidate)
+                    guard PartOfSpeechTag.compatible(required: requiredPartOfSpeech, candidate: candidatePOS) else {
+                        continue
+                    }
+                }
 
                 seen.insert(candidate)
                 ranked.append(
@@ -109,7 +117,8 @@ public struct LexicalSubstitutionEngine {
                 requiredSyllables: item.syllables,
                 excludeWords: excludeWords,
                 theme: theme,
-                maxResults: maxPerPosition
+                maxResults: maxPerPosition,
+                requiredPartOfSpeech: PartOfSpeechAnalyzer.tagWord(item.word)
             )
         }
     }

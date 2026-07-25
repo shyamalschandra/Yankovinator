@@ -103,6 +103,9 @@ struct YankovinatorCLI: AsyncParsableCommand {
     @Flag(name: .long, help: "Disable auto cloud batch prescription (worker cap, timeout, fast coherence)")
     var noCloudPrescription: Bool = false
 
+    @Flag(name: .long, help: "Extra Ollama hill-climbing per line in batch (syllables/POS/coherence); slower but higher fit scores")
+    var fitOptimize: Bool = false
+
     // Validate options after parsing
     mutating func validate() throws {
         if let file = lyricsFile {
@@ -546,9 +549,11 @@ struct YankovinatorCLI: AsyncParsableCommand {
             fputs("🚀 Starting \(generations) generations (\(poolSize) cloud workers)…\n", stderr)
             fflush(stderr)
         }
-        if candidates > 1 {
+        if candidates > 1 || fitOptimize {
             fputs(
-                "ℹ️  Batch fast path: one `/api/generate` per lyric line (refinement off, slim prompts); checkpoints update .parody.txt as each candidate finishes.\n",
+                "ℹ️  Batch: one `/api/generate` per lyric line; POS+OED prompts; global fit scoring" +
+                (fitOptimize ? "; --fit-optimize hill-climbs weak lines" : "") +
+                "; checkpoints update .parody.txt as candidates finish.\n",
                 stderr
             )
             fflush(stderr)
@@ -613,7 +618,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
             let generator = ParodyGenerator(
                 ollamaBaseURL: ollamaURL,
                 ollamaModel: model,
-                useDictionary: false,
+                useDictionary: true,
                 useUnsupervisedNLP: false,
                 skipLLMCoherenceCritic: skipLLMCoherence
             )
@@ -632,9 +637,18 @@ struct YankovinatorCLI: AsyncParsableCommand {
                 },
                 refinementPasses: batchRefinementPasses,
                 enableCoherenceRegeneration: enableCoherenceRegeneration,
-                verbose: false
+                optimizeFit: fitOptimize,
+                fitTargetScore: ParodyFitScore.defaultCorrectnessThreshold,
+                maxFitAttemptsPerLine: fitOptimize ? 2 : 0,
+                fitPolishRounds: fitOptimize ? 1 : 0,
+                verbose: verbose
             )
-            let score = CandidateParodyGenerator.scoreParody(lines: parodyLines, keywords: keywordsDict)
+            let score = CandidateParodyGenerator.scoreParody(
+                lines: parodyLines,
+                keywords: keywordsDict,
+                originalLyrics: lyrics,
+                dictionary: OEDDictionary.shared
+            )
             let result = ParodyCandidateResult(index: item.candidateIndex, lines: parodyLines, score: score)
 
             if candidates > 1 {
@@ -648,7 +662,15 @@ struct YankovinatorCLI: AsyncParsableCommand {
             }
 
             if verbose {
-                let msg = "[\(item.job.id)#c\(item.candidateIndex)] score=\(String(format: "%.3f", score))"
+                let fit = ParodyFitScorer.scoreSong(
+                    originalLyrics: lyrics,
+                    parodyLines: parodyLines,
+                    keywords: keywordsDict,
+                    dictionary: OEDDictionary.shared
+                )
+                let msg =
+                    "[\(item.job.id)#c\(item.candidateIndex)] score=\(String(format: "%.3f", score)) " +
+                    "minLine=\(String(format: "%.3f", fit.minComposite)) allFit=\(fit.allFit)"
                 if useTUIStatus {
                     await progressHandle?.postMessage(msg)
                 } else {
@@ -854,6 +876,9 @@ struct YankovinatorCLI: AsyncParsableCommand {
                     }
                 },
                 refinementPasses: 2,
+                optimizeFit: true,
+                maxFitAttemptsPerLine: 4,
+                fitPolishRounds: 2,
                 verbose: verbose
             )
         } catch let error as OllamaError {

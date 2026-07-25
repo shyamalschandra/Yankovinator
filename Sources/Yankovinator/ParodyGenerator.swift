@@ -53,6 +53,9 @@ public class ParodyGenerator {
     ///   - progressCallback: Optional callback for progress updates
     ///   - refinementPasses: Number of refinement passes for punctuation correction (default: 2)
     ///   - enableCoherenceRegeneration: When false, skips an extra full-line Ollama retry from the critic (batch fast path)
+    ///   - optimizeFit: Hill-climb each line toward syllable/POS/coherence targets (extra Ollama only when needed)
+    ///   - fitTargetScore: Stop line optimization when composite fit reaches this value
+    ///   - maxFitAttemptsPerLine: Max regenerate/refine attempts per line during fit optimization
     ///   - verbose: Whether to print verbose messages
     /// - Returns: Array of parody lines with preserved empty lines
     public func generateParody(
@@ -61,6 +64,10 @@ public class ParodyGenerator {
         progressCallback: ((Int, Int) -> Void)? = nil,
         refinementPasses: Int = 2,
         enableCoherenceRegeneration: Bool = true,
+        optimizeFit: Bool = true,
+        fitTargetScore: Double = ParodyFitScore.defaultCorrectnessThreshold,
+        maxFitAttemptsPerLine: Int = 4,
+        fitPolishRounds: Int = 2,
         verbose: Bool = false
     ) async throws -> [String] {
         // Verify model once per CLI run (batch workers share this flag).
@@ -142,11 +149,13 @@ public class ParodyGenerator {
             // Analyze word-by-word syllable structure of original line
             let wordSyllables = syllableCounter.analyzeWordSyllables(in: originalLine)
             let wordSyllablePattern = wordSyllables.map { "\($0.word)(\($0.syllables))" }.joined(separator: " ")
-            
+            let wordPOS = PartOfSpeechAnalyzer.analyzeLine(originalLine)
+            let wordPartOfSpeechPattern = PartOfSpeechAnalyzer.promptPattern(from: wordPOS)
+
             // Merge OED + unsupervised embedding substitutions
             let wordSuggestions = getWordSuggestions(
-                for: originalLine,
-                syllableCounts: wordSyllables.map { $0.syllables },
+                originalLine: originalLine,
+                wordAnalysis: wordPOS,
                 theme: Array(keywords.keys),
                 excludeWords: usedWords
             )
@@ -166,6 +175,7 @@ public class ParodyGenerator {
                     rhymeScheme: rhymeScheme,
                     wordSyllablePattern: wordSyllablePattern,
                     wordSyllables: wordSyllables.map { $0.syllables },
+                    wordPartOfSpeechPattern: wordPartOfSpeechPattern,
                     usedWords: usedWords,
                     wordSuggestions: wordSuggestions
                 )
@@ -297,6 +307,7 @@ public class ParodyGenerator {
                             rhymeScheme: rhymeScheme,
                             wordSyllablePattern: wordSyllablePattern,
                             wordSyllables: wordSyllables.map { $0.syllables },
+                            wordPartOfSpeechPattern: wordPartOfSpeechPattern,
                             usedWords: usedWords,
                             wordSuggestions: wordSuggestions
                         )
@@ -315,7 +326,28 @@ public class ParodyGenerator {
                     }
                 }
             }
-            
+
+            if optimizeFit && maxFitAttemptsPerLine > 0 {
+                parodyLine = try await optimizeLineForFit(
+                    line: parodyLine,
+                    originalLine: originalLine,
+                    syllableCount: syllableCount,
+                    keywords: keywords,
+                    contextLines: contextLines,
+                    wordSyllables: wordSyllables.map { $0.syllables },
+                    wordSyllablePattern: wordSyllablePattern,
+                    wordPartOfSpeechPattern: wordPartOfSpeechPattern,
+                    wordSuggestions: wordSuggestions,
+                    rhymeGroup: currentRhymeGroup,
+                    rhymingLines: rhymingLines,
+                    rhymeScheme: rhymeScheme,
+                    usedWords: usedWords,
+                    targetScore: fitTargetScore,
+                    maxAttempts: maxFitAttemptsPerLine,
+                    verbose: verbose
+                )
+            }
+
             // Extract words from the generated line and add to usedWords set
             let wordsInLine = extractWords(from: parodyLine)
             usedWords.formUnion(wordsInLine)
@@ -329,7 +361,32 @@ public class ParodyGenerator {
             parodyLines.append(parodyLine)
             nonEmptyParodyLines.append(parodyLine) // Track for rhyming
         }
-        
+
+        if optimizeFit {
+            let rounds = max(0, fitPolishRounds)
+            for _ in 0..<rounds {
+                try await polishWeakestLinesForFit(
+                    originalLyrics: originalLyrics,
+                    parodyLines: &parodyLines,
+                    keywords: keywords,
+                    syllableStructure: syllableStructure,
+                    rhymeGroups: rhymeGroups,
+                    rhymeScheme: rhymeScheme,
+                    emptyLineIndices: emptyLineIndices,
+                    fitTargetScore: fitTargetScore,
+                    maxLinesToPolish: 4,
+                    verbose: verbose
+                )
+                let check = ParodyFitScorer.scoreSong(
+                    originalLyrics: originalLyrics,
+                    parodyLines: parodyLines,
+                    keywords: keywords,
+                    dictionary: dictionary
+                )
+                if check.allFit { break }
+            }
+        }
+
         return parodyLines
     }
     
@@ -350,20 +407,22 @@ public class ParodyGenerator {
     
     /// Get word suggestions from OED + unsupervised embedding substitution.
     private func getWordSuggestions(
-        for originalLine: String,
-        syllableCounts: [Int],
+        originalLine: String,
+        wordAnalysis: [WordPartOfSpeech],
         theme: [String],
         excludeWords: Set<String>
     ) -> [[(word: String, definition: String)]] {
         var dictionarySuggestions: [[(word: String, definition: String)]] = []
         if let dict = dictionary, dict.isLoaded() {
-            for syllableCount in syllableCounts {
+            for item in wordAnalysis {
                 dictionarySuggestions.append(
                     dict.getWordSuggestions(
-                        syllableCount: syllableCount,
+                        syllableCount: item.syllables,
                         theme: theme,
                         excludeWords: excludeWords,
-                        maxResults: 8
+                        maxResults: 8,
+                        similarTo: item.word,
+                        requiredPartOfSpeech: item.partOfSpeech
                     )
                 )
             }
@@ -442,6 +501,7 @@ public class ParodyGenerator {
         let keywordDescriptions = keywords.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
         let wordPattern = wordSyllables.map { String($0) }.joined(separator: "-")
         let generatedPattern = generatedSyllableCounts.map { String($0) }.joined(separator: "-")
+        let posPattern = PartOfSpeechAnalyzer.promptPattern(from: PartOfSpeechAnalyzer.analyzeLine(originalLine))
         
         var rhymingInfo = ""
         if !rhymingLines.isEmpty {
@@ -483,15 +543,17 @@ public class ParodyGenerator {
         
         Requirements:
         1. Each word must have the EXACT SAME number of syllables as the corresponding word in the original
-        2. Total syllables: \(syllableCount)
-        3. Theme: \(keywordDescriptions) - STRONGLY EMBRACE and ADVANCE this theme in the line's meaning
-        4. Rhyme group: \(rhymeGroup) in \(rhymeScheme) scheme\(rhymingInfo)
-        5. IN-LINE RHYMES: Include internal rhymes within the line, separated by commas. For example: "bright, light, night" or "dream, stream, seem". These comma-separated words should rhyme with each other and appear naturally in the line.
-        6. The line must make COGENT SENSE and have ARTISTIC STYLE that AMAZES
-        7. Use vivid imagery, clever wordplay, and evocative language
-        8. The line should flow naturally like professional song lyrics
-        9. Use proper contractions with apostrophes (e.g., "don't", "can't", "it's", "won't") when appropriate for natural speech
-        10. SEMANTICALLY ADVANCE THE THEME: Make the theme keywords integral to the line's meaning\(semanticContext)\(wordAvoidance)
+        2. Each word must match the SAME part of speech as the corresponding original word (pattern: \(posPattern))
+        3. Total syllables: \(syllableCount)
+        4. Theme: \(keywordDescriptions) - STRONGLY EMBRACE and ADVANCE this theme in the line's meaning
+        5. Rhyme group: \(rhymeGroup) in \(rhymeScheme) scheme\(rhymingInfo)
+        6. IN-LINE RHYMES: Include internal rhymes within the line, separated by commas. For example: "bright, light, night" or "dream, stream, seem". These comma-separated words should rhyme with each other and appear naturally in the line.
+        7. The line must make COGENT SENSE and have ARTISTIC STYLE that AMAZES
+        8. PARODY COMEDY: witty, surprising, theme-aware humor—not nonsense; use unabridged-dictionary-defensible English
+        9. Use vivid imagery, clever wordplay, and evocative language
+        10. The line should flow naturally like professional song lyrics
+        11. Use proper contractions with apostrophes (e.g., "don't", "can't", "it's", "won't") when appropriate for natural speech
+        12. SEMANTICALLY ADVANCE THE THEME: Make the theme keywords integral to the line's meaning\(semanticContext)\(wordAvoidance)
         
         Generate a refined line that matches the syllable pattern EXACTLY while maintaining semantic coherence, meaning, style, and quality.
         Return ONLY the refined line, nothing else:
@@ -831,6 +893,212 @@ public class ParodyGenerator {
         }
         
         return result
+    }
+
+    private func optimizeLineForFit(
+        line: String,
+        originalLine: String,
+        syllableCount: Int,
+        keywords: [String: String],
+        contextLines: [String],
+        wordSyllables: [Int],
+        wordSyllablePattern: String,
+        wordPartOfSpeechPattern: String,
+        wordSuggestions: [[(word: String, definition: String)]],
+        rhymeGroup: String,
+        rhymingLines: [String],
+        rhymeScheme: String,
+        usedWords: Set<String>,
+        targetScore: Double,
+        maxAttempts: Int,
+        verbose: Bool
+    ) async throws -> String {
+        func measure(_ candidate: String) -> ParodyFitScore {
+            ParodyFitScorer.scoreLine(
+                original: originalLine,
+                parody: candidate,
+                previousParodyLines: contextLines,
+                keywords: keywords,
+                dictionary: dictionary
+            )
+        }
+
+        var best = line
+        var bestMetrics = measure(best)
+        if bestMetrics.fitsCorrectly || bestMetrics.composite >= targetScore || maxAttempts <= 0 {
+            return best
+        }
+
+        for attempt in 1...maxAttempts {
+            if bestMetrics.fitsCorrectly || bestMetrics.composite >= targetScore { break }
+
+            var candidate = best
+            do {
+                if bestMetrics.wordSyllablePattern < 0.95
+                    || bestMetrics.wordCountMatch < 0.99
+                    || bestMetrics.lineTotalSyllables < 0.98
+                    || bestMetrics.partOfSpeech < 0.85 {
+                    candidate = try await refineWordSyllableMatching(
+                        line: best,
+                        originalLine: originalLine,
+                        syllableCount: syllableCount,
+                        keywords: keywords,
+                        wordSyllables: wordSyllables,
+                        rhymeGroup: rhymeGroup,
+                        rhymingLines: rhymingLines,
+                        rhymeScheme: rhymeScheme,
+                        previousLines: contextLines,
+                        usedWords: usedWords
+                    )
+                } else {
+                    candidate = try await ollamaClient.generateParodyLine(
+                        originalLine: originalLine,
+                        syllableCount: syllableCount,
+                        keywords: keywords,
+                        previousLines: contextLines,
+                        rhymeGroup: rhymeGroup,
+                        rhymingLines: rhymingLines,
+                        rhymeScheme: rhymeScheme,
+                        wordSyllablePattern: wordSyllablePattern,
+                        wordSyllables: wordSyllables,
+                        wordPartOfSpeechPattern: wordPartOfSpeechPattern,
+                        usedWords: usedWords,
+                        wordSuggestions: wordSuggestions
+                    )
+                }
+            } catch {
+                if verbose {
+                    print("Fit attempt \(attempt) failed: \(error)")
+                }
+                continue
+            }
+
+            let metrics = measure(candidate)
+            if metrics.composite > bestMetrics.composite {
+                best = candidate
+                bestMetrics = metrics
+            }
+            if verbose {
+                print(
+                    "Fit line attempt \(attempt): composite=\(String(format: "%.3f", metrics.composite)) " +
+                    "syll=\(String(format: "%.2f", metrics.wordSyllablePattern)) " +
+                    "pos=\(String(format: "%.2f", metrics.partOfSpeech))"
+                )
+            }
+        }
+
+        return best
+    }
+
+    private func polishWeakestLinesForFit(
+        originalLyrics: [String],
+        parodyLines: inout [String],
+        keywords: [String: String],
+        syllableStructure: [Int],
+        rhymeGroups: [String],
+        rhymeScheme: String,
+        emptyLineIndices: Set<Int>,
+        fitTargetScore: Double,
+        maxLinesToPolish: Int,
+        verbose: Bool
+    ) async throws {
+        let summary = ParodyFitScorer.scoreSong(
+            originalLyrics: originalLyrics,
+            parodyLines: parodyLines,
+            keywords: keywords,
+            dictionary: dictionary
+        )
+        if summary.allFit { return }
+
+        var weak: [(index: Int, composite: Double)] = []
+        for (index, score) in summary.lineScores.enumerated() {
+            guard let score, !score.fitsCorrectly else { continue }
+            weak.append((index, score.composite))
+        }
+        weak.sort { $0.composite < $1.composite }
+        let indices = weak.prefix(maxLinesToPolish).map(\.index).sorted()
+
+        var nonEmptyParodyLines: [String] = []
+        var nonEmptyIndexByLineIndex: [Int: Int] = [:]
+        for (lineIndex, line) in parodyLines.enumerated() {
+            if emptyLineIndices.contains(lineIndex) { continue }
+            if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+            nonEmptyIndexByLineIndex[lineIndex] = nonEmptyParodyLines.count
+            nonEmptyParodyLines.append(line)
+        }
+
+        for lineIndex in indices {
+            let originalLine = originalLyrics[lineIndex]
+            guard let nonEmptyIndex = nonEmptyIndexByLineIndex[lineIndex] else { continue }
+            let syllableCount = syllableStructure[nonEmptyIndex]
+            let wordSyllables = syllableCounter.analyzeWordSyllables(in: originalLine)
+            let currentRhymeGroup = RhymeSchemeAnalyzer.getRhymeGroup(for: nonEmptyIndex, in: rhymeGroups)
+            let rhymingLineIndices = RhymeSchemeAnalyzer.getRhymingLineIndices(for: nonEmptyIndex, in: rhymeGroups)
+
+            var rhymingLines: [String] = []
+            for rhymingIndex in rhymingLineIndices where rhymingIndex < nonEmptyParodyLines.count {
+                rhymingLines.append(nonEmptyParodyLines[rhymingIndex])
+            }
+
+            let contextLines = parodyLines.prefix(lineIndex).filter {
+                !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            let current = parodyLines[lineIndex]
+            let before = ParodyFitScorer.scoreLine(
+                original: originalLine,
+                parody: current,
+                previousParodyLines: Array(contextLines),
+                keywords: keywords,
+                dictionary: dictionary
+            )
+
+            let refined = try await refineWordSyllableMatching(
+                line: current,
+                originalLine: originalLine,
+                syllableCount: syllableCount,
+                keywords: keywords,
+                wordSyllables: wordSyllables.map(\.syllables),
+                rhymeGroup: currentRhymeGroup,
+                rhymingLines: rhymingLines,
+                rhymeScheme: rhymeScheme,
+                previousLines: Array(contextLines),
+                usedWords: []
+            )
+            let polished = applyCapitalizationAndPunctuation(to: refined, from: originalLine)
+            let after = ParodyFitScorer.scoreLine(
+                original: originalLine,
+                parody: polished,
+                previousParodyLines: Array(contextLines),
+                keywords: keywords,
+                dictionary: dictionary
+            )
+
+            if after.composite > before.composite {
+                parodyLines[lineIndex] = polished
+                nonEmptyParodyLines[nonEmptyIndex] = polished
+                if verbose {
+                    print(
+                        "Polished line \(lineIndex + 1): \(String(format: "%.3f", before.composite)) → " +
+                        "\(String(format: "%.3f", after.composite))"
+                    )
+                }
+            }
+        }
+
+        let finalSummary = ParodyFitScorer.scoreSong(
+            originalLyrics: originalLyrics,
+            parodyLines: parodyLines,
+            keywords: keywords,
+            dictionary: dictionary
+        )
+        if verbose {
+            print(
+                "Song fit: global=\(String(format: "%.3f", finalSummary.globalScore)) " +
+                "min=\(String(format: "%.3f", finalSummary.minComposite)) " +
+                "allFit=\(finalSummary.allFit)"
+            )
+        }
+        _ = fitTargetScore
     }
     
     /// Parse `keyword: definition` lines from a theme file (no Ollama / dictionary init).
