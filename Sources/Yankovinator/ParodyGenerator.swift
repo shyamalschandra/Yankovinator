@@ -36,9 +36,9 @@ public class ParodyGenerator {
         self.coherenceCritic = CoherenceCritic(ollamaClient: client)
         self.useUnsupervisedNLP = useUnsupervisedNLP
         
-        // Initialize dictionary if requested
+        // Initialize dictionary if requested (shared instance — avoids N× download/parse in batch workers).
         if useDictionary {
-            self.dictionary = OEDDictionary(dictionaryPath: dictionaryPath)
+            self.dictionary = dictionaryPath.map { OEDDictionary(dictionaryPath: $0) } ?? OEDDictionary.shared
         } else {
             self.dictionary = nil
         }
@@ -59,11 +59,14 @@ public class ParodyGenerator {
         refinementPasses: Int = 2,
         verbose: Bool = false
     ) async throws -> [String] {
-        // Verify model is available before starting
-        try await verifyModel()
+        // Verify model once per CLI run (batch workers share this flag).
+        if !OllamaClient.isModelVerified(baseURL: ollamaClient.policyBaseURL, model: ollamaClient.policyModel) {
+            try await verifyModel()
+            OllamaClient.markModelVerified(baseURL: ollamaClient.policyBaseURL, model: ollamaClient.policyModel)
+        }
 
-        // Avoid racing a background OED download against suggestion lookups.
-        dictionary?.waitUntilLoaded(timeoutSeconds: 2.0)
+        // Optional dictionary: brief wait only (never block batch workers for seconds).
+        dictionary?.waitUntilLoaded(timeoutSeconds: 0.05)
         
         // Track which lines are empty to preserve structure
         let emptyLineIndices = Set(originalLyrics.enumerated().compactMap { index, line in
@@ -824,17 +827,9 @@ public class ParodyGenerator {
         return result
     }
     
-    /// Extract keywords and definitions from text using NaturalLanguage
-    /// - Parameter text: Text containing keywords and definitions
-    /// - Returns: Dictionary of keywords and their definitions
-    public func extractKeywords(from text: String) -> [String: String] {
+    /// Parse `keyword: definition` lines from a theme file (no Ollama / dictionary init).
+    public static func parseKeywords(from text: String) -> [String: String] {
         var keywords: [String: String] = [:]
-        
-        // Use NaturalLanguage for named entity recognition
-        let tagger = NLTagger(tagSchemes: [.lexicalClass, .nameType])
-        tagger.string = text
-        
-        // Simple pattern matching for "keyword: definition" format
         let lines = text.components(separatedBy: .newlines)
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -842,14 +837,19 @@ public class ParodyGenerator {
                 let keyword = String(trimmed[..<colonIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
                 let definition = String(trimmed[trimmed.index(after: colonIndex)...])
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                
                 if !keyword.isEmpty && !definition.isEmpty {
                     keywords[keyword] = definition
                 }
             }
         }
-        
         return keywords
+    }
+
+    /// Extract keywords and definitions from text using NaturalLanguage
+    /// - Parameter text: Text containing keywords and definitions
+    /// - Returns: Dictionary of keywords and their definitions
+    public func extractKeywords(from text: String) -> [String: String] {
+        Self.parseKeywords(from: text)
     }
     
     /// Validate that Ollama is available and model exists

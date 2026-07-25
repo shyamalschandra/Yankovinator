@@ -72,6 +72,11 @@ final class ParallelJobRunnerTests: XCTestCase {
         XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 32), 10)
     }
 
+    func testConsumerPoolRespectsOllamaNumParallel() {
+        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 10, ollamaNumParallel: 4), 4)
+        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 3, ollamaNumParallel: 10), 3)
+    }
+
     func testMapNeverExceedsTenConcurrentConsumers() async throws {
         actor Counter {
             var inFlight = 0

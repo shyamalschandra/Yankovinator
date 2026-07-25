@@ -21,13 +21,41 @@ public class OllamaClient {
 
     private static var workerConnectionHint = 16
     private static let maxRetryAttempts = 4
+    private static var verifiedModelKeys: Set<String> = []
+    private static let verificationLock = NSLock()
+
+    /// Mark model as already verified for this process (skips per-job `/api/tags` checks).
+    public static func markModelVerified(baseURL: String, model: String) {
+        verificationLock.lock()
+        verifiedModelKeys.insert(modelVerificationKey(baseURL: baseURL, model: model))
+        verificationLock.unlock()
+    }
+
+    public static func isModelVerified(baseURL: String, model: String) -> Bool {
+        verificationLock.lock()
+        defer { verificationLock.unlock() }
+        return verifiedModelKeys.contains(modelVerificationKey(baseURL: baseURL, model: model))
+    }
+
+    private static func modelVerificationKey(baseURL: String, model: String) -> String {
+        let base = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return "\(base)|\(model)"
+    }
 
     /// Tune HTTP client for parallel workers and cloud models. Call before the first Ollama request in a run.
-    public static func applyRuntimePolicy(model: String, workers: Int, timeoutOverride: Int? = nil) {
+    public static func applyRuntimePolicy(
+        model: String,
+        workers: Int,
+        ollamaNumParallel: Int? = nil,
+        timeoutOverride: Int? = nil
+    ) {
         clientLock.lock()
         defer { clientLock.unlock() }
 
-        let concurrent = ParallelJobRunner.consumerPoolSize(requestedWorkers: workers)
+        let concurrent = ParallelJobRunner.consumerPoolSize(
+            requestedWorkers: workers,
+            ollamaNumParallel: ollamaNumParallel
+        )
         workerConnectionHint = max(4, min(concurrent + 4, 64))
 
         if let timeout = timeoutOverride {
@@ -61,6 +89,10 @@ public class OllamaClient {
     private let baseURL: String
     private let model: String
     private let httpClient: HTTPClient
+
+    /// Base URL and model for runtime policy / verification caching.
+    var policyBaseURL: String { baseURL }
+    var policyModel: String { model }
     
     /// Initialize Ollama client
     /// - Parameters:

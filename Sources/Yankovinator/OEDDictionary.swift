@@ -28,6 +28,9 @@ public final class OEDDictionary: @unchecked Sendable {
     private let syllableCounter: SyllableCounter.Type
     private let loadGroup = DispatchGroup()
     
+    /// Shared dictionary loader (one background download / parse per process).
+    public static let shared = OEDDictionary()
+
     /// Initialize dictionary from a dictionary file path or URL
     /// - Parameters:
     ///   - dictionaryPath: Path to dictionary file (optional)

@@ -52,6 +52,12 @@ struct YankovinatorCLI: AsyncParsableCommand {
     @Option(name: .long, help: "Per-request Ollama HTTP timeout in seconds (30-900; default 300 for :cloud models, 180 otherwise)")
     var ollamaTimeout: Int?
 
+    @Option(
+        name: .long,
+        help: "Ollama server OLLAMA_NUM_PARALLEL (docs.ollama.com/faq). Default: env OLLAMA_NUM_PARALLEL on localhost; caps consumers."
+    )
+    var ollamaNumParallel: Int?
+
     @Option(name: .shortAndLong, help: "Output file path for single-file mode (default: stdout)")
     var output: String?
 
@@ -66,7 +72,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
 
     @Option(
         name: [.customLong("workers"), .customLong("jobs")],
-        help: "Requested Ollama worker count (1-32; default 1). At most 10 consumers run at once via a producer-consumer queue."
+        help: "Requested Ollama worker count (1-32; default 1). Match OLLAMA_NUM_PARALLEL on the server (see docs.ollama.com/faq)."
     )
     var workers: Int = 1
 
@@ -190,6 +196,10 @@ struct YankovinatorCLI: AsyncParsableCommand {
             }
         }
 
+        if let parallel = ollamaNumParallel, parallel < 1 {
+            throw ValidationError("OLLAMA_NUM_PARALLEL must be at least 1 (got \(parallel)).")
+        }
+
         ollamaURL = ollamaURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !ollamaURL.isEmpty else {
             throw ValidationError("Ollama URL cannot be empty")
@@ -229,14 +239,38 @@ struct YankovinatorCLI: AsyncParsableCommand {
         }
     }
 
+    private func resolvedOllamaNumParallel() -> Int? {
+        if let ollamaNumParallel { return ollamaNumParallel }
+        guard ParallelJobRunner.isLocalOllamaHost(ollamaURL) else { return nil }
+        return OllamaParallelPolicy.serverNumParallelFromEnvironment()
+    }
+
+    private func consumerPoolSize() -> Int {
+        ParallelJobRunner.consumerPoolSize(
+            requestedWorkers: workers,
+            ollamaNumParallel: resolvedOllamaNumParallel()
+        )
+    }
+
     func run() async throws {
+        let serverParallel = resolvedOllamaNumParallel()
+        OllamaParallelPolicy.printServerParallelHintIfNeeded(
+            baseURL: ollamaURL,
+            requestedWorkers: workers,
+            ollamaNumParallel: serverParallel,
+            verbose: verbose
+        )
+
         if verbose {
             print("Yankovinator - Parody Generator")
             print("Copyright (C) 2025, Shyamal Suhana Chandra")
             print("")
             print("Ollama URL: \(ollamaURL)")
             print("Model: \(model)")
-            print("Workers: \(workers) (consumer pool: \(ParallelJobRunner.consumerPoolSize(requestedWorkers: workers)))")
+            print("Workers: \(workers) (consumer pool: \(consumerPoolSize()))")
+            if let serverParallel {
+                print("OLLAMA_NUM_PARALLEL (server): \(serverParallel)")
+            }
             print("Candidates: \(candidates)")
             if let ollamaTimeout {
                 print("Ollama timeout: \(ollamaTimeout)s")
@@ -248,7 +282,8 @@ struct YankovinatorCLI: AsyncParsableCommand {
 
         OllamaClient.applyRuntimePolicy(
             model: model,
-            workers: ParallelJobRunner.consumerPoolSize(requestedWorkers: workers),
+            workers: workers,
+            ollamaNumParallel: serverParallel,
             timeoutOverride: ollamaTimeout
         )
 
@@ -412,7 +447,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
         let generations = jobs.count * candidates
         if verbose {
             print("Batch mode (\(label)): \(jobs.count) base job(s) × \(candidates) candidate(s) = \(generations) generation(s)")
-            print("Workers: \(workers) (consumer pool: \(ParallelJobRunner.consumerPoolSize(requestedWorkers: workers)))")
+            print("Workers: \(workers) (consumer pool: \(consumerPoolSize()))")
             for job in jobs.prefix(20) {
                 let themeNote = job.themeId.map { " theme=\($0)" } ?? ""
                 print("  • \(job.id)\(themeNote) → \(job.outputPath)")
@@ -440,36 +475,80 @@ struct YankovinatorCLI: AsyncParsableCommand {
             }
         }
 
+        var lyricsByPath: [String: [String]] = [:]
+        var keywordsByPath: [String: [String: String]] = [:]
+        lyricsByPath.reserveCapacity(jobs.count)
+        for job in jobs {
+            if lyricsByPath[job.lyricsPath] == nil {
+                lyricsByPath[job.lyricsPath] = try Self.readLyricsStatic(from: job.lyricsPath)
+            }
+            if let path = job.keywordsPath, keywordsByPath[path] == nil {
+                keywordsByPath[path] = try Self.loadKeywordsFileStatic(path: path)
+            }
+        }
+        // Touch shared dictionary once (background load) instead of per worker.
+        _ = OEDDictionary.shared
+
         let showProgress = !noProgress && generations > 1
+        let poolSize = consumerPoolSize()
+        let serverParallel = resolvedOllamaNumParallel()
+        let progressHandle: CLIWorkerPoolProgress? =
+            (showProgress && TerminalProgress.isInteractive && poolSize > 1)
+            ? CLIWorkerPoolProgress(total: generations, workerCount: poolSize, label: "Generations")
+            : nil
+
+        if showProgress && TerminalProgress.isInteractive {
+            fputs("🚀 Starting \(generations) generations (\(poolSize) cloud workers)…\n", stderr)
+            fflush(stderr)
+        }
+
+        let useTUIStatus = progressHandle != nil
         let scored: [ScoredExpansion] = try await ParallelJobRunner.map(
             items: expanded,
             workers: workers,
             showProgress: showProgress,
             progressLabel: "Generations",
+            ollamaNumParallel: serverParallel,
+            progressHandle: progressHandle,
             progress: { completed, total in
                 if verbose {
-                    Task { await log.printLine("Generations completed: \(completed)/\(total)") }
+                    if useTUIStatus {
+                        Task { await progressHandle?.postMessage("completed \(completed)/\(total)") }
+                    } else {
+                        Task { await log.printLine("Generations completed: \(completed)/\(total)") }
+                    }
                 }
             }
         ) { item in
-            let lyrics = try Self.readLyricsStatic(from: item.job.lyricsPath)
+            guard let lyrics = lyricsByPath[item.job.lyricsPath] else {
+                throw ValidationError("Missing preloaded lyrics for \(item.job.lyricsPath)")
+            }
             let keywordsDict: [String: String]
             if let keywordsPath = item.job.keywordsPath {
-                keywordsDict = try Self.loadKeywordsFileStatic(
-                    path: keywordsPath,
-                    ollamaURL: ollamaURL,
-                    model: model
-                )
+                guard let cached = keywordsByPath[keywordsPath] else {
+                    throw ValidationError("Missing preloaded keywords for \(keywordsPath)")
+                }
+                keywordsDict = cached
             } else {
                 keywordsDict = defaultKeywords
             }
 
             if analyze && item.candidateIndex == 1 {
-                await log.printLine("[\(item.job.id)] syllable analysis (\(lyrics.filter { !$0.isEmpty }.count) non-empty lines)")
+                let msg = "[\(item.job.id)] syllable analysis (\(lyrics.filter { !$0.isEmpty }.count) non-empty lines)"
+                if useTUIStatus {
+                    await progressHandle?.postMessage(msg)
+                } else {
+                    await log.printLine(msg)
+                }
             }
 
             if verbose {
-                await log.printLine("[\(item.job.id)#c\(item.candidateIndex)] generating…")
+                let msg = "[\(item.job.id)#c\(item.candidateIndex)] generating…"
+                if useTUIStatus {
+                    await progressHandle?.postMessage(msg)
+                } else {
+                    await log.printLine(msg)
+                }
             }
 
             let generator = ParodyGenerator(ollamaBaseURL: ollamaURL, ollamaModel: model)
@@ -483,7 +562,12 @@ struct YankovinatorCLI: AsyncParsableCommand {
             let result = ParodyCandidateResult(index: item.candidateIndex, lines: parodyLines, score: score)
 
             if verbose {
-                await log.printLine("[\(item.job.id)#c\(item.candidateIndex)] score=\(String(format: "%.3f", score))")
+                let msg = "[\(item.job.id)#c\(item.candidateIndex)] score=\(String(format: "%.3f", score))"
+                if useTUIStatus {
+                    await progressHandle?.postMessage(msg)
+                } else {
+                    await log.printLine(msg)
+                }
             }
 
             return ScoredExpansion(job: item.job, result: result)
@@ -556,8 +640,6 @@ struct YankovinatorCLI: AsyncParsableCommand {
         if let keywordsFile = keywords {
             return try Self.loadKeywordsFileStatic(
                 path: keywordsFile,
-                ollamaURL: ollamaURL,
-                model: model,
                 verbose: verbose
             )
         }
@@ -571,16 +653,13 @@ struct YankovinatorCLI: AsyncParsableCommand {
 
     private static func loadKeywordsFileStatic(
         path: String,
-        ollamaURL: String,
-        model: String,
         verbose: Bool = false
     ) throws -> [String: String] {
         guard let keywordsContent = try? String(contentsOfFile: path, encoding: .utf8) else {
             throw ValidationError("Could not read keywords file: \(path)")
         }
 
-        let extractor = ParodyGenerator(ollamaBaseURL: ollamaURL, ollamaModel: model)
-        let keywordsDict = extractor.extractKeywords(from: keywordsContent)
+        let keywordsDict = ParodyGenerator.parseKeywords(from: keywordsContent)
         if verbose {
             print("Loaded \(keywordsDict.count) keywords from \(path):")
             for (key, value) in keywordsDict {
@@ -600,6 +679,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
         if !isAvailable {
             do {
                 try await generator.verifyModel()
+                OllamaClient.markModelVerified(baseURL: ollamaURL, model: model)
             } catch let error as OllamaError {
                 throw ValidationError("""
                 \(error.description)
@@ -616,6 +696,8 @@ struct YankovinatorCLI: AsyncParsableCommand {
                 Error: \(error.localizedDescription)
                 """)
             }
+        } else {
+            OllamaClient.markModelVerified(baseURL: ollamaURL, model: model)
         }
 
         if verbose {

@@ -44,11 +44,11 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.2**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.3**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.2/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.3/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/
@@ -138,7 +138,8 @@ swift run yankovinator <lyrics-file> [options]
 - `--input-dir <dir>`: Directory of `.txt` lyrics files (batch / parallel jobs)
 - `--themes-dir <dir>`: Directory of theme keyword `.txt` files; with `--input-dir` runs **every song × every theme**
 - `--output-dir <dir>`: Output directory for batch mode (`<song>.parody.txt`, or `<theme>/<song>.parody.txt` for cross-product)
-- `--workers, --jobs <n>`: Requested worker count (1–32; default 1). At most **10 consumers** run at once (producer–consumer queue).
+- `--workers, --jobs <n>`: Requested worker count (1–32). Consumer pool = min(workers, 10, `OLLAMA_NUM_PARALLEL` on localhost).
+- `--ollama-num-parallel <n>`: Ollama server `OLLAMA_NUM_PARALLEL` (or set env before `ollama serve`; see [Ollama FAQ](https://docs.ollama.com/faq)).
 - `--candidates <n>`: Generate N ranked variants per song×theme (1–32; use `10` for combinatorial ranking)
 - `--keep-candidates`: Also write ranked variants under `<song>.candidates/`
 - `--force`: Allow songs×themes×candidates totals larger than 100 generations
@@ -160,6 +161,17 @@ swift run yankovinator data/example_lyrics.txt \
   --keywords data/example_keywords.txt \
   --output parody.txt
 ```
+
+**Ollama server parallelism (local `ollama serve`):**
+
+Match [Ollama’s `OLLAMA_NUM_PARALLEL`](https://docs.ollama.com/faq) to your `--workers` / consumer pool (e.g. 10):
+
+```bash
+export OLLAMA_NUM_PARALLEL=10   # set before starting the server; restart required
+ollama serve
+```
+
+The CLI reads `$OLLAMA_NUM_PARALLEL` on `localhost` or you can pass `--ollama-num-parallel 10`.
 
 **Parallel batch (10 workers on cloud Ollama):**
 

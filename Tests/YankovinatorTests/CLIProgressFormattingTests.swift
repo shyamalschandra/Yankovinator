@@ -28,8 +28,8 @@ final class CLIProgressFormattingTests: XCTestCase {
 
     func testWorkerPoolLinesIncludeEachWorker() {
         let slots: [CLIProgressFormatting.WorkerSlot] = [
-            .working(jobNumber: 3, tick: 2),
-            .idle,
+            .working(jobNumber: 3, tick: 2, spentSeconds: 125, etaSeconds: 240),
+            .idle(spentSeconds: 40, etaSeconds: 600),
         ]
         let lines = CLIProgressFormatting.workerPoolLines(
             label: "Generations",
@@ -37,9 +37,11 @@ final class CLIProgressFormattingTests: XCTestCase {
             total: 10,
             overallWidth: 12,
             workerCount: 2,
-            workerBarWidth: 10,
+            workerBarWidth: 8,
             tick: 0,
             theme: .plain,
+            batchSpentSeconds: 200,
+            batchEtaSeconds: 900,
             slots: slots
         )
         let visible = lines.map { CLIProgressFormatting.visibleText($0) }
@@ -47,8 +49,17 @@ final class CLIProgressFormattingTests: XCTestCase {
         XCTAssertTrue(visible[1].contains("cloud worker"))
         XCTAssertTrue(visible[2].contains("W01"))
         XCTAssertTrue(visible[2].contains("#3"))
+        XCTAssertTrue(visible[2].contains("spent"))
+        XCTAssertTrue(visible[2].contains("ETA"))
         XCTAssertTrue(visible[3].contains("W02"))
         XCTAssertTrue(visible[3].contains("idle"))
+    }
+
+    func testFormatDurationAndETA() {
+        XCTAssertEqual(CLIProgressFormatting.formatDuration(45), "45s")
+        XCTAssertEqual(CLIProgressFormatting.formatDuration(125), "2m05s")
+        XCTAssertEqual(CLIProgressFormatting.formatETA(90), "~1m30s")
+        XCTAssertEqual(CLIProgressFormatting.formatETA(nil), "…")
     }
 
     func testLiveThemeIncludesEmojiWhenEnabled() {

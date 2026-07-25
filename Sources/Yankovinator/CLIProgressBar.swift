@@ -18,6 +18,17 @@ public enum TerminalProgress {
     public static var tuiTheme: TUITheme {
         isInteractive ? .live : .plain
     }
+
+    /// Terminal width for stderr (used to size the status rail).
+    public static var columns: Int {
+        var size = winsize()
+        #if canImport(Darwin)
+        if ioctl(STDERR_FILENO, TIOCGWINSZ, &size) == 0, size.ws_col > 0 {
+            return Int(size.ws_col)
+        }
+        #endif
+        return 100
+    }
 }
 
 /// Controls ANSI color and emoji in progress output.
@@ -46,6 +57,36 @@ enum ANSI {
     static let fgWhite = "\u{001B}[37m"
 }
 
+// MARK: - Async coalesced redraw
+
+/// Coalesces rapid progress events into ~30fps redraws (avoids tearing / lost text).
+private actor CLITUIRefreshLoop {
+    private var generation: UInt64 = 0
+    private var redraw: (@Sendable () async -> Void)?
+
+    func setRedrawHandler(_ handler: @escaping @Sendable () async -> Void) {
+        redraw = handler
+    }
+
+    func scheduleRedraw() {
+        generation &+= 1
+        let token = generation
+        Task {
+            try? await Task.sleep(nanoseconds: 35_000_000)
+            await self.flushIfLatest(token: token)
+        }
+    }
+
+    private func flushIfLatest(token: UInt64) async {
+        guard token == generation else { return }
+        await redraw?()
+    }
+
+    func cancelPending() {
+        generation &+= 1
+    }
+}
+
 /// Async-safe single-line progress bar written to stderr.
 public actor CLIProgressBar {
     private let total: Int
@@ -55,26 +96,36 @@ public actor CLIProgressBar {
     private var completed: Int = 0
     private var animationTick: Int = 0
     private var finished = false
+    private var latestStatus: String = ""
+    private let refresh = CLITUIRefreshLoop()
 
     public init(total: Int, label: String = "Jobs", width: Int = 28, theme: TUITheme = TerminalProgress.tuiTheme) {
         self.total = max(1, total)
         self.label = label
         self.width = max(8, width)
         self.theme = theme
+        Task { await refresh.setRedrawHandler { [weak self] in await self?.renderNow() } }
+    }
+
+    public func postMessage(_ message: String) {
+        guard !message.isEmpty else { return }
+        latestStatus = message
+        Task { await refresh.scheduleRedraw() }
     }
 
     public func advance(by amount: Int = 1) {
         guard !finished, amount > 0 else { return }
         completed = min(total, completed + amount)
         animationTick += 1
-        render()
+        Task { await refresh.scheduleRedraw() }
     }
 
-    public func finish() {
+    public func finish() async {
         guard !finished else { return }
         finished = true
         completed = total
-        render()
+        await refresh.cancelPending()
+        renderNow()
         if theme.useEmoji {
             fputs("\(theme.wrap("✅ Done", ANSI.fgGreen))\n", stderr)
         } else {
@@ -83,7 +134,7 @@ public actor CLIProgressBar {
         fflush(stderr)
     }
 
-    private func render() {
+    private func renderNow() {
         let line = CLIProgressFormatting.overallLine(
             label: label,
             completed: completed,
@@ -91,7 +142,8 @@ public actor CLIProgressBar {
             width: width,
             tick: animationTick,
             theme: theme,
-            framed: false
+            framed: false,
+            statusRail: latestStatus
         )
         fputs("\r\u{001B}[2K\(line)", stderr)
         fflush(stderr)
@@ -102,7 +154,7 @@ public actor CLIProgressBar {
 public actor CLIWorkerPoolProgress {
     private enum Slot: Sendable {
         case idle
-        case working(jobNumber: Int, tick: Int)
+        case working(jobNumber: Int, tick: Int, startedAt: Date)
     }
 
     private let total: Int
@@ -116,6 +168,13 @@ public actor CLIWorkerPoolProgress {
     private var animationTick: Int = 0
     private var finished = false
     private var previousLineCount = 0
+    private var latestStatus: String = ""
+    private var statusHistory: [String] = []
+    private var workerBusySeconds: [TimeInterval]
+    private var averageJobSeconds: TimeInterval?
+    private let batchStartedAt: Date
+    private let refresh = CLITUIRefreshLoop()
+    private var animationTask: Task<Void, Never>?
 
     public init(
         total: Int,
@@ -132,28 +191,67 @@ public actor CLIWorkerPoolProgress {
         self.workerBarWidth = max(8, workerBarWidth)
         self.theme = theme
         self.slots = Array(repeating: .idle, count: self.workerCount)
+        self.workerBusySeconds = Array(repeating: 0, count: self.workerCount)
+        self.batchStartedAt = Date()
+
+        if TerminalProgress.isInteractive {
+            animationTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 120_000_000)
+                    await self?.animationHeartbeat()
+                }
+            }
+        }
+        Task { await refresh.setRedrawHandler { [weak self] in await self?.renderNow() } }
+    }
+
+    /// Append a status line (retained in memory; shown on the right rail + feed line).
+    public func postMessage(_ message: String) {
+        guard !message.isEmpty else { return }
+        statusHistory.append(message)
+        if statusHistory.count > 500 {
+            statusHistory.removeFirst(statusHistory.count - 500)
+        }
+        latestStatus = message
+        Task { await refresh.scheduleRedraw() }
     }
 
     public func beginJob(workerID: Int, jobNumber: Int) {
         guard !finished, workerID >= 0, workerID < workerCount else { return }
-        slots[workerID] = .working(jobNumber: jobNumber, tick: animationTick)
-        render()
+        slots[workerID] = .working(jobNumber: jobNumber, tick: animationTick, startedAt: Date())
+        Task { await refresh.scheduleRedraw() }
     }
 
     public func completeJob(workerID: Int) {
         guard !finished, workerID >= 0, workerID < workerCount else { return }
+        if case .working(_, _, let startedAt) = slots[workerID] {
+            recordJobFinished(workerID: workerID, duration: Date().timeIntervalSince(startedAt))
+        }
         slots[workerID] = .idle
         completed = min(total, completed + 1)
         animationTick += 1
-        render()
+        Task { await refresh.scheduleRedraw() }
     }
 
-    public func finish() {
+    private func recordJobFinished(workerID: Int, duration: TimeInterval) {
+        let clamped = max(0, duration)
+        workerBusySeconds[workerID] += clamped
+        if let averageJobSeconds {
+            self.averageJobSeconds = averageJobSeconds * 0.75 + clamped * 0.25
+        } else {
+            averageJobSeconds = clamped
+        }
+    }
+
+    public func finish() async {
         guard !finished else { return }
         finished = true
+        animationTask?.cancel()
+        animationTask = nil
         completed = total
         slots = Array(repeating: .idle, count: workerCount)
-        render()
+        await refresh.cancelPending()
+        renderNow()
         let doneLine = theme.useEmoji
             ? theme.wrap("✅ All generations complete", ANSI.fgGreen + ANSI.bold)
             : "Done."
@@ -161,7 +259,39 @@ public actor CLIWorkerPoolProgress {
         fflush(stderr)
     }
 
-    private func render() {
+    private func animationHeartbeat() {
+        guard !finished else { return }
+        let anyWorking = slots.contains {
+            if case .working = $0 { return true }
+            return false
+        }
+        guard anyWorking else { return }
+        animationTick &+= 1
+        Task { await refresh.scheduleRedraw() }
+    }
+
+    private func renderNow() {
+        let now = Date()
+        let formattedSlots: [CLIProgressFormatting.WorkerSlot] = (0..<workerCount).map { workerID in
+            let slot = workerID < slots.count ? slots[workerID] : .idle
+            let spent = spentSeconds(workerID: workerID, slot: slot, now: now)
+            let remaining = estimatedRemainingSeconds(workerID: workerID, slot: slot, now: now)
+            switch slot {
+            case .idle:
+                return .idle(spentSeconds: spent, etaSeconds: remaining)
+            case .working(let jobNumber, let tick, _):
+                return .working(
+                    jobNumber: jobNumber,
+                    tick: tick,
+                    spentSeconds: spent,
+                    etaSeconds: remaining
+                )
+            }
+        }
+
+        let batchSpent = now.timeIntervalSince(batchStartedAt)
+        let batchETA = estimatedBatchRemaining(now: now)
+
         let lines = CLIProgressFormatting.workerPoolLines(
             label: label,
             completed: completed,
@@ -171,16 +301,50 @@ public actor CLIWorkerPoolProgress {
             workerBarWidth: workerBarWidth,
             tick: animationTick,
             theme: theme,
-            slots: slots.map { slot in
-                switch slot {
-                case .idle:
-                    return CLIProgressFormatting.WorkerSlot.idle
-                case .working(let jobNumber, let tick):
-                    return .working(jobNumber: jobNumber, tick: tick)
-                }
-            }
+            statusRail: latestStatus,
+            recentMessages: Array(statusHistory.suffix(2)),
+            batchSpentSeconds: batchSpent,
+            batchEtaSeconds: batchETA,
+            slots: formattedSlots
         )
         CLIProgressFormatting.writeMultiline(lines, previousLineCount: &previousLineCount)
+    }
+
+    private func spentSeconds(workerID: Int, slot: Slot, now: Date) -> TimeInterval {
+        var total = workerBusySeconds[workerID]
+        if case .working(_, _, let startedAt) = slot {
+            total += max(0, now.timeIntervalSince(startedAt))
+        }
+        return total
+    }
+
+    private func estimatedRemainingSeconds(workerID: Int, slot: Slot, now: Date) -> TimeInterval? {
+        _ = workerID
+        let jobsLeft = max(0, total - completed)
+        guard jobsLeft > 0 else { return 0 }
+        guard let avg = averageJobSeconds else { return nil }
+
+        let queueShare = (Double(jobsLeft) / Double(workerCount)) * avg
+
+        switch slot {
+        case .idle:
+            return queueShare
+        case .working(_, _, let startedAt):
+            let elapsed = max(0, now.timeIntervalSince(startedAt))
+            let currentJobLeft = max(0, avg - elapsed)
+            let futureJobs = max(0, Double(jobsLeft - 1) / Double(workerCount)) * avg
+            return currentJobLeft + futureJobs
+        }
+    }
+
+    private func estimatedBatchRemaining(now: Date) -> TimeInterval? {
+        let jobsLeft = max(0, total - completed)
+        guard jobsLeft > 0, let avg = averageJobSeconds else { return nil }
+        let active = max(1, slots.filter {
+            if case .working = $0 { return true }
+            return false
+        }.count)
+        return (Double(jobsLeft) / Double(active)) * avg
     }
 }
 
@@ -188,11 +352,36 @@ public actor CLIWorkerPoolProgress {
 
 enum CLIProgressFormatting {
     enum WorkerSlot: Equatable {
-        case idle
-        case working(jobNumber: Int, tick: Int)
+        case idle(spentSeconds: TimeInterval, etaSeconds: TimeInterval?)
+        case working(jobNumber: Int, tick: Int, spentSeconds: TimeInterval, etaSeconds: TimeInterval?)
     }
 
-    /// Partial block glyphs (1/8 … 7/8) plus full and empty.
+    static func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        if total < 1 { return "<1s" }
+        if total < 60 { return "\(total)s" }
+        let minutes = total / 60
+        let secs = total % 60
+        if minutes < 60 { return "\(minutes)m\(String(format: "%02d", secs))s" }
+        let hours = minutes / 60
+        let mins = minutes % 60
+        return "\(hours)h\(String(format: "%02d", mins))m"
+    }
+
+    static func formatETA(_ seconds: TimeInterval?) -> String {
+        guard let seconds else { return "…" }
+        if seconds <= 0 { return "0s" }
+        return "~\(formatDuration(seconds))"
+    }
+
+    static func workerTimingLabel(spent: TimeInterval, eta: TimeInterval?, theme: TUITheme) -> String {
+        let spentEmoji = theme.useEmoji ? "⏱ " : "spent "
+        let etaEmoji = theme.useEmoji ? "⌛ " : "ETA "
+        let spentText = theme.wrap("\(spentEmoji)\(formatDuration(spent))", ANSI.fgWhite)
+        let etaText = theme.wrap("\(etaEmoji)\(formatETA(eta))", ANSI.fgGreen)
+        return "\(spentText) \(etaText)"
+    }
+
     private static let partialBlocks: [Character] = ["▏", "▎", "▍", "▌", "▋", "▊", "▉"]
     private static let emptyBlock: Character = "░"
     private static let fullBlock: Character = "█"
@@ -204,7 +393,8 @@ enum CLIProgressFormatting {
         width: Int,
         tick: Int = 0,
         theme: TUITheme = .plain,
-        framed: Bool = true
+        framed: Bool = true,
+        statusRail: String = ""
     ) -> String {
         let ratio = Double(completed) / Double(max(1, total))
         let bar = unicodeDeterminateBar(ratio: ratio, width: width, theme: theme)
@@ -213,11 +403,11 @@ enum CLIProgressFormatting {
         let title = theme.wrap("\(emoji)\(label)", ANSI.bold + ANSI.fgCyan)
         let counts = theme.wrap("\(completed)/\(total)", ANSI.fgWhite)
         let percent = theme.wrap("(\(pct)%)", ANSI.fgGreen)
-        let core = "\(title) \(boxAround(bar, theme: theme)) \(counts) \(percent)"
+        var core = "\(title) \(boxAround(bar, theme: theme)) \(counts) \(percent)"
         if framed && theme.useEmoji {
-            return "╭─ \(theme.wrap("☁️", ANSI.fgBlue)) \(core)"
+            core = "╭─ \(theme.wrap("☁️", ANSI.fgBlue)) \(core)"
         }
-        return core
+        return appendStatusRail(to: core, statusRail: statusRail, theme: theme)
     }
 
     static func workerPoolLines(
@@ -229,9 +419,23 @@ enum CLIProgressFormatting {
         workerBarWidth: Int,
         tick: Int,
         theme: TUITheme,
+        statusRail: String = "",
+        recentMessages: [String] = [],
+        batchSpentSeconds: TimeInterval = 0,
+        batchEtaSeconds: TimeInterval? = nil,
         slots: [WorkerSlot]
     ) -> [String] {
         var lines: [String] = []
+        let batchTiming = theme.useEmoji
+            ? theme.wrap(
+                "⏱ \(formatDuration(batchSpentSeconds))  ⌛ \(formatETA(batchEtaSeconds))",
+                ANSI.dim + ANSI.fgCyan
+            )
+            : theme.wrap(
+                "spent \(formatDuration(batchSpentSeconds))  ETA \(formatETA(batchEtaSeconds))",
+                ANSI.dim + ANSI.fgCyan
+            )
+        let overallRail = statusRail.isEmpty ? batchTiming : "\(statusRail)  ·  \(batchTiming)"
         lines.append(overallLine(
             label: label,
             completed: completed,
@@ -239,32 +443,63 @@ enum CLIProgressFormatting {
             width: overallWidth,
             tick: tick,
             theme: theme,
-            framed: true
+            framed: true,
+            statusRail: overallRail
         ))
-        let headerEmoji = theme.useEmoji ? "🧵 " : ""
-        let header = "\(headerEmoji)\(workerCount) cloud worker(s)"
-        lines.append(theme.wrap("├─ \(header)", ANSI.dim + ANSI.fgMagenta))
+
+        if !recentMessages.isEmpty {
+            for (offset, message) in recentMessages.enumerated().reversed() {
+                let prefix = offset == 0
+                    ? (theme.useEmoji ? "├─ 💬 " : "├─ ")
+                    : (theme.useEmoji ? "│    ↳ " : "│    ")
+                let styled = theme.wrap(truncate(message, maxVisible: 72), offset == 0 ? ANSI.fgWhite : ANSI.dim)
+                lines.append("\(prefix)\(styled)")
+            }
+        } else {
+            let headerEmoji = theme.useEmoji ? "🧵 " : ""
+            let header = "\(headerEmoji)\(workerCount) cloud worker(s)"
+            lines.append(theme.wrap("├─ \(header)", ANSI.dim + ANSI.fgMagenta))
+        }
 
         for workerID in 0..<workerCount {
-            let slot = workerID < slots.count ? slots[workerID] : .idle
+            let slot = workerID < slots.count ? slots[workerID] : .idle(spentSeconds: 0, etaSeconds: nil)
             let id = String(format: "W%02d", workerID + 1)
             let workerLabel = theme.wrap(id, ANSI.bold + ANSI.fgYellow)
 
             switch slot {
-            case .idle:
+            case .idle(let spent, let eta):
                 let bar = unicodeDeterminateBar(ratio: 0, width: workerBarWidth, theme: theme)
                 let stateEmoji = theme.useEmoji ? "💤 " : ""
                 let state = theme.wrap("\(stateEmoji)idle", ANSI.dim)
-                lines.append("│ \(workerLabel) \(boxAround(bar, theme: theme)) \(state)")
-            case .working(let jobNumber, let slotTick):
+                let timing = workerTimingLabel(spent: spent, eta: eta, theme: theme)
+                lines.append("│ \(workerLabel) \(boxAround(bar, theme: theme)) \(state)  \(timing)")
+            case .working(let jobNumber, let slotTick, let spent, let eta):
                 let bar = unicodeIndeterminateBar(tick: slotTick + tick, width: workerBarWidth, theme: theme)
                 let stateEmoji = theme.useEmoji ? "⚡ " : ""
                 let state = theme.wrap("\(stateEmoji)#\(jobNumber)", ANSI.fgYellow)
-                lines.append("│ \(workerLabel) \(boxAround(bar, theme: theme)) \(state)")
+                let timing = workerTimingLabel(spent: spent, eta: eta, theme: theme)
+                lines.append("│ \(workerLabel) \(boxAround(bar, theme: theme)) \(state)  \(timing)")
             }
         }
         lines.append(theme.wrap("╰────────────────────────────────────", ANSI.dim + ANSI.fgCyan))
         return lines
+    }
+
+    static func appendStatusRail(to line: String, statusRail: String, theme: TUITheme) -> String {
+        guard !statusRail.isEmpty else { return line }
+        let sep = theme.wrap(" │ ", ANSI.dim + ANSI.fgCyan)
+        let prefix = theme.useEmoji ? "💬 " : ""
+        let visibleLeft = visibleText(line).count
+        let columns = TerminalProgress.columns
+        let maxRail = max(12, columns - visibleLeft - visibleText(sep).count - 2)
+        let body = truncate("\(prefix)\(statusRail)", maxVisible: maxRail)
+        return line + sep + theme.wrap(body, ANSI.fgYellow)
+    }
+
+    static func truncate(_ text: String, maxVisible: Int) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard maxVisible > 1, trimmed.count > maxVisible else { return trimmed }
+        return String(trimmed.prefix(max(1, maxVisible - 1))) + "…"
     }
 
     static func boxAround(_ bar: String, theme: TUITheme) -> String {
@@ -294,8 +529,7 @@ enum CLIProgressFormatting {
                 chars.append(partialBlocks[level - 1])
             }
         }
-        let raw = String(chars)
-        return theme.useColor ? raw : raw
+        return String(chars)
     }
 
     static func unicodeIndeterminateBar(tick: Int, width: Int, theme: TUITheme) -> String {
@@ -303,16 +537,13 @@ enum CLIProgressFormatting {
         var chars = Array(repeating: emptyBlock, count: width)
         let pulseLength = min(4, width)
         let origin = tick % (width + pulseLength)
-        let pulseGlyphs: [Character] = theme.useEmoji
-            ? [fullBlock, "▓", "▒", "░"]
-            : [fullBlock, "▓", "▒", "░"]
+        let pulseGlyphs: [Character] = [fullBlock, "▓", "▒", "░"]
         for offset in 0..<pulseLength {
             let index = origin - offset
             if index >= 0 && index < width {
                 chars[index] = pulseGlyphs[min(offset, pulseGlyphs.count - 1)]
             }
         }
-        // Trailing sparkle animation on leading edge
         let head = (origin + pulseLength - 1) % width
         if head >= 0 && head < width {
             chars[head] = theme.useEmoji ? "✨" as Character : fullBlock
@@ -331,7 +562,6 @@ enum CLIProgressFormatting {
         previousLineCount = lines.count
     }
 
-    /// Strip ANSI escapes for stable test assertions.
     static func visibleText(_ string: String) -> String {
         var result = ""
         var index = string.startIndex

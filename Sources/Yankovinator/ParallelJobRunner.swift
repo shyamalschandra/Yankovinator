@@ -21,8 +21,20 @@ public enum ParallelJobRunner {
     public static let maxConcurrentConsumers = 10
 
     /// Effective consumer count: at most `maxConcurrentConsumers` workers run at once.
-    public static func consumerPoolSize(requestedWorkers: Int) -> Int {
-        min(clampWorkers(requestedWorkers), maxConcurrentConsumers)
+    /// When `ollamaNumParallel` is set (Ollama server `OLLAMA_NUM_PARALLEL`), consumers are capped to match.
+    public static func consumerPoolSize(requestedWorkers: Int, ollamaNumParallel: Int? = nil) -> Int {
+        let base = min(clampWorkers(requestedWorkers), maxConcurrentConsumers)
+        guard let ollamaNumParallel, ollamaNumParallel >= 1 else { return base }
+        return min(base, ollamaNumParallel)
+    }
+
+    /// True when the Ollama base URL points at this machine (server env vars apply).
+    public static func isLocalOllamaHost(_ baseURL: String) -> Bool {
+        let lower = baseURL.lowercased()
+        return lower.contains("localhost")
+            || lower.contains("127.0.0.1")
+            || lower.hasPrefix("http://127.")
+            || lower.hasPrefix("https://127.")
     }
 
     /// Effective generation counts (songs × themes × candidates) above this require `--force`.
@@ -51,19 +63,28 @@ public enum ParallelJobRunner {
         workers: Int,
         showProgress: Bool = false,
         progressLabel: String = "Jobs",
+        ollamaNumParallel: Int? = nil,
+        progressHandle: CLIWorkerPoolProgress? = nil,
         progress: (@Sendable (Int, Int) -> Void)? = nil,
         operation: @escaping @Sendable (Item) async throws -> Result
     ) async throws -> [Result] {
         guard !items.isEmpty else { return [] }
 
-        let poolSize = consumerPoolSize(requestedWorkers: workers)
+        let poolSize = consumerPoolSize(requestedWorkers: workers, ollamaNumParallel: ollamaNumParallel)
         let showUI = showProgress && TerminalProgress.isInteractive && items.count > 1
         let simpleBar: CLIProgressBar? = (showUI && poolSize == 1)
             ? CLIProgressBar(total: items.count, label: progressLabel)
             : nil
-        let workerPool: CLIWorkerPoolProgress? = (showUI && poolSize > 1)
-            ? CLIWorkerPoolProgress(total: items.count, workerCount: poolSize, label: progressLabel)
-            : nil
+        let workerPool: CLIWorkerPoolProgress?
+        if showUI && poolSize > 1 {
+            workerPool = progressHandle ?? CLIWorkerPoolProgress(
+                total: items.count,
+                workerCount: poolSize,
+                label: progressLabel
+            )
+        } else {
+            workerPool = progressHandle
+        }
 
         if poolSize == 1 || items.count == 1 {
             var results: [Result] = []
@@ -112,12 +133,14 @@ public enum ParallelJobRunner {
                     for await (index, item) in stream {
                         if let workerPool {
                             await workerPool.beginJob(workerID: workerID, jobNumber: index + 1)
+                            await workerPool.postMessage("W\(String(format: "%02d", workerID + 1)) → job #\(index + 1)")
                         }
                         let value = try await operation(item)
                         await store.put(index: index, value: value)
                         let (done, total) = await counter.increment()
                         progress?(done, total)
                         if let workerPool {
+                            await workerPool.postMessage("done \(done)/\(total)")
                             await workerPool.completeJob(workerID: workerID)
                         }
                     }
@@ -168,6 +191,67 @@ private actor CompletionCounter {
     func increment() -> (Int, Int) {
         completed += 1
         return (completed, total)
+    }
+}
+
+// MARK: - Ollama server parallelism (OLLAMA_NUM_PARALLEL)
+
+/// Aligns client worker pools with Ollama server parallelism (see https://docs.ollama.com/faq).
+public enum OllamaParallelPolicy {
+    /// Reads `OLLAMA_NUM_PARALLEL` from the environment (must be set before starting `ollama serve`).
+    public static func serverNumParallelFromEnvironment() -> Int? {
+        guard let raw = ProcessInfo.processInfo.environment["OLLAMA_NUM_PARALLEL"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !raw.isEmpty,
+            let value = Int(raw),
+            value >= 1
+        else { return nil }
+        return value
+    }
+
+    /// Suggested value for `OLLAMA_NUM_PARALLEL` on the server for a given `--workers` request.
+    public static func recommendedServerNumParallel(requestedWorkers: Int) -> Int {
+        ParallelJobRunner.consumerPoolSize(requestedWorkers: requestedWorkers, ollamaNumParallel: nil)
+    }
+
+    /// Print setup guidance when local Ollama may queue excess parallel requests (default server parallel is often 1).
+    public static func printServerParallelHintIfNeeded(
+        baseURL: String,
+        requestedWorkers: Int,
+        ollamaNumParallel: Int?,
+        verbose: Bool
+    ) {
+        guard ParallelJobRunner.isLocalOllamaHost(baseURL), requestedWorkers > 1 else { return }
+        let pool = ParallelJobRunner.consumerPoolSize(
+            requestedWorkers: requestedWorkers,
+            ollamaNumParallel: ollamaNumParallel
+        )
+        let recommended = recommendedServerNumParallel(requestedWorkers: requestedWorkers)
+
+        if let ollamaNumParallel {
+            if pool < recommended && (verbose || requestedWorkers > 1) {
+                fputs(
+                    """
+                    ⚠️  OLLAMA_NUM_PARALLEL=\(ollamaNumParallel) caps consumers at \(pool) \
+                    (requested pool without cap: \(recommended)). \
+                    Increase server parallelism or lower --workers. See https://docs.ollama.com/faq
+
+                    """,
+                    stderr
+                )
+            }
+            return
+        }
+
+        fputs(
+            """
+            ℹ️  For \(recommended) parallel client workers, start Ollama with \
+            OLLAMA_NUM_PARALLEL=\(recommended) (then restart `ollama serve`). \
+            See https://docs.ollama.com/faq — RAM ∝ OLLAMA_NUM_PARALLEL × context length.
+
+            """,
+            stderr
+        )
     }
 }
 
