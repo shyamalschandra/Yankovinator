@@ -546,9 +546,19 @@ struct YankovinatorCLI: AsyncParsableCommand {
             fputs("🚀 Starting \(generations) generations (\(poolSize) cloud workers)…\n", stderr)
             fflush(stderr)
         }
+        if candidates > 1 {
+            fputs(
+                "ℹ️  Batch fast path: one `/api/generate` per lyric line (refinement off, slim prompts); checkpoints update .parody.txt as each candidate finishes.\n",
+                stderr
+            )
+            fflush(stderr)
+        }
 
         let useTUIStatus = progressHandle != nil
-        let skipLLMCoherence = rx.skipLLMCoherenceInBatch
+        let skipLLMCoherence = true
+        let batchRefinementPasses = 0
+        let enableCoherenceRegeneration = false
+        let checkpoint = BatchOutputCheckpoint()
         let scored: [ScoredExpansion] = try await ParallelJobRunner.map(
             items: expanded,
             workers: rx.effectiveWorkers,
@@ -603,6 +613,8 @@ struct YankovinatorCLI: AsyncParsableCommand {
             let generator = ParodyGenerator(
                 ollamaBaseURL: ollamaURL,
                 ollamaModel: model,
+                useDictionary: false,
+                useUnsupervisedNLP: false,
                 skipLLMCoherenceCritic: skipLLMCoherence
             )
             let parodyLines = try await generator.generateParody(
@@ -618,11 +630,22 @@ struct YankovinatorCLI: AsyncParsableCommand {
                         )
                     }
                 },
-                refinementPasses: 2,
+                refinementPasses: batchRefinementPasses,
+                enableCoherenceRegeneration: enableCoherenceRegeneration,
                 verbose: false
             )
             let score = CandidateParodyGenerator.scoreParody(lines: parodyLines, keywords: keywordsDict)
             let result = ParodyCandidateResult(index: item.candidateIndex, lines: parodyLines, score: score)
+
+            if candidates > 1 {
+                try await checkpoint.consider(job: item.job, result: result) { message in
+                    if useTUIStatus {
+                        Task { await progressHandle?.postMessage(message) }
+                    } else if verbose {
+                        Task { await log.printLine(message) }
+                    }
+                }
+            }
 
             if verbose {
                 let msg = "[\(item.job.id)#c\(item.candidateIndex)] score=\(String(format: "%.3f", score))"

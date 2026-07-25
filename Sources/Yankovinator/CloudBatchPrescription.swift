@@ -5,7 +5,7 @@ import Foundation
 
 /// Recommended runtime adjustments when batching against heavy `:cloud` models.
 public enum CloudBatchPrescription: Sendable {
-    /// Max concurrent consumer workers for large cloud models (Ollama + remote backend queue).
+    /// Max concurrent consumer workers for heavy cloud models (client-side cap; model may be fast).
     public static let heavyCloudMaxConsumers = 4
 
     /// Per-request timeout when CLI did not pass `--ollama-timeout`.
@@ -17,6 +17,9 @@ public enum CloudBatchPrescription: Sendable {
         public let appliedWorkerCap: Bool
         public let appliedTimeoutSeconds: Int?
         public let skipLLMCoherenceInBatch: Bool
+        public let batchRefinementPasses: Int
+        public let enableCoherenceRegeneration: Bool
+        public let incrementalCheckpoints: Bool
         public let messages: [String]
     }
 
@@ -44,6 +47,9 @@ public enum CloudBatchPrescription: Sendable {
                 appliedWorkerCap: false,
                 appliedTimeoutSeconds: nil,
                 skipLLMCoherenceInBatch: false,
+                batchRefinementPasses: 2,
+                enableCoherenceRegeneration: true,
+                incrementalCheckpoints: false,
                 messages: []
             )
         }
@@ -53,7 +59,7 @@ public enum CloudBatchPrescription: Sendable {
         var messages: [String] = []
         if appliedCap {
             messages.append(
-                "Rx: Cap cloud workers \(clamped)→\(capped) for \(model) (remote queue; use --no-cloud-prescription to keep \(clamped))."
+                "Rx: Cap workers \(clamped)→\(capped) — limits parallel in-flight HTTP jobs (not model speed). Use --no-cloud-prescription for \(clamped)."
             )
         }
 
@@ -66,7 +72,7 @@ public enum CloudBatchPrescription: Sendable {
         }
 
         messages.append(
-            "Rx: Line progress in TUI; batch skips extra LLM coherence probes (embedding critic only)."
+            "Rx: One generate call per lyric line in batch (refinement/coherence LLM loops off); checkpoints after each candidate."
         )
 
         return Plan(
@@ -75,6 +81,9 @@ public enum CloudBatchPrescription: Sendable {
             appliedWorkerCap: appliedCap,
             appliedTimeoutSeconds: appliedTimeout,
             skipLLMCoherenceInBatch: true,
+            batchRefinementPasses: 0,
+            enableCoherenceRegeneration: false,
+            incrementalCheckpoints: true,
             messages: messages
         )
     }

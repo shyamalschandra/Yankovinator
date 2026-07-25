@@ -148,9 +148,18 @@ public class OllamaClient {
     }
 
     private static func isTransientNetworkError(_ error: Error) -> Bool {
-        if error is HTTPClientError { return true }
         let s = String(describing: error).lowercased()
-        if s.contains("timeout") || s.contains("deadline") { return true }
+        // Timeouts are not retried — cloud models may legitimately run near the limit; retrying multiplies wall time.
+        if s.contains("timeout") || s.contains("deadline") || s.contains("timed out") {
+            return false
+        }
+        if error is HTTPClientError {
+            if s.contains("connection") {
+                return s.contains("reset") || s.contains("closed") || s.contains("refused")
+                    || s.contains("not connected")
+            }
+            return false
+        }
         if s.contains("httpclienterror") || s.contains("error 1") { return true }
         if s.contains("connection") {
             return s.contains("reset") || s.contains("closed") || s.contains("refused")

@@ -44,11 +44,11 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.6**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.7**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.6/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.7/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/
@@ -175,7 +175,7 @@ ollama serve
 
 The CLI reads `$OLLAMA_NUM_PARALLEL` on `localhost` or you can pass `--ollama-num-parallel 10`.
 
-**Heavy cloud batch (`qwen3.5:397b-cloud`, etc.):** by default Yankovinator prints a **prescription** on stderr: consumer pool capped at **4**, **600s** request timeout, per-line `L12/48` on worker rows, and no extra Ollama call per line for coherence scoring. Override with `--no-cloud-prescription` (keep `--workers 10` at your own queue risk).
+**Heavy cloud batch (`qwen3.5:397b-cloud`, etc.):** stderr **prescription** caps parallel HTTP workers (not model speed), sets **600s** timeout if unset, uses **one generate per line** in batch with slim prompts, and **checkpoint** writes best `.parody.txt` after each candidate. Override with `--no-cloud-prescription`.
 
 **Parallel batch (10 workers on cloud Ollama):**
 

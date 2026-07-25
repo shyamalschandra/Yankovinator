@@ -28,6 +28,17 @@ final class YankovinatorTests: XCTestCase {
         }
     }
     
+    func testBatchFastPathRhymeAndStructure() {
+        let lyrics = [
+            "Twinkle twinkle little star",
+            "How I wonder what you are",
+        ]
+        let detected = RhymeSchemeAnalyzer.detectRhymeScheme(from: lyrics)
+        XCTAssertEqual(detected.rhymeGroups.count, lyrics.count)
+        let structure = SyllableCounter.analyzeSongStructure(lyrics)
+        XCTAssertEqual(structure.count, lyrics.count)
+    }
+
     func testParodyGeneration() async throws {
         // This is an integration test that requires Ollama
         // Skip if Ollama is not available

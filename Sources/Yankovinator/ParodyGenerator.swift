@@ -52,6 +52,7 @@ public class ParodyGenerator {
     ///   - keywords: Dictionary of theme keywords and their definitions
     ///   - progressCallback: Optional callback for progress updates
     ///   - refinementPasses: Number of refinement passes for punctuation correction (default: 2)
+    ///   - enableCoherenceRegeneration: When false, skips an extra full-line Ollama retry from the critic (batch fast path)
     ///   - verbose: Whether to print verbose messages
     /// - Returns: Array of parody lines with preserved empty lines
     public func generateParody(
@@ -59,6 +60,7 @@ public class ParodyGenerator {
         keywords: [String: String],
         progressCallback: ((Int, Int) -> Void)? = nil,
         refinementPasses: Int = 2,
+        enableCoherenceRegeneration: Bool = true,
         verbose: Bool = false
     ) async throws -> [String] {
         // Verify model once per CLI run (batch workers share this flag).
@@ -189,6 +191,7 @@ public class ParodyGenerator {
             var hasDoneWordSyllableRefinement = false
             var hasDoneSemanticRefinement = false
             
+            if refinementPasses >= 1 {
             for pass in 1...refinementPasses {
                 do {
                     // First pass: verify and refine word-by-word syllable matching with semantic coherence
@@ -240,9 +243,10 @@ public class ParodyGenerator {
                     // Continue with the line we have, don't break
                 }
             }
+            }
             
             // If we haven't run semantic coherence yet and we should, run it now
-            if shouldRunSemanticCoherence && !hasDoneSemanticRefinement {
+            if refinementPasses >= 1 && shouldRunSemanticCoherence && !hasDoneSemanticRefinement {
                 do {
                     parodyLine = try await refineSemanticCoherence(
                         line: parodyLine,
@@ -264,7 +268,7 @@ public class ParodyGenerator {
             }
 
             // Unsupervised coherence critic: regenerate once if next-line surprise is too high
-            if useUnsupervisedNLP && !contextLines.isEmpty {
+            if enableCoherenceRegeneration && useUnsupervisedNLP && !contextLines.isEmpty {
                 let criticScore = await coherenceCritic.score(
                     candidate: parodyLine,
                     previousLines: contextLines,
