@@ -45,20 +45,82 @@ public enum CLIProgressMIDINotes {
 #if os(macOS)
 import AVFoundation
 
-/// Shared DLS synth; lazy start; notes scheduled off the progress hot path.
-public actor CLIProgressMIDISoundboard {
-    public static let shared = CLIProgressMIDISoundboard()
+/// AVAudioEngine must run on the main thread; keep all sampler I/O here.
+@MainActor
+final class CLIProgressMIDIEngine {
+    static let shared = CLIProgressMIDIEngine()
 
     private var sampler: AVAudioUnitSampler?
     private var engine: AVAudioEngine?
     private var isReady = false
-    private var lastPulseTick: [Int: Int] = [:]
-    private var lastOverallMilestone = -1
+    private var noteGeneration: UInt64 = 0
 
     private let dlsPath =
         "/System/Library/Components/CoreAudio.component/Contents/Resources/gs_instruments.dls"
 
     private init() {}
+
+    func play(
+        workerID: Int,
+        note: UInt8,
+        velocity: UInt8,
+        durationMs: Int,
+        useWorkerProgram: Bool
+    ) {
+        ensureReady()
+        guard isReady, let sampler else { return }
+        noteGeneration &+= 1
+        let generation = noteGeneration
+        let channel = CLIProgressMIDINotes.workerChannel(workerID: workerID)
+        if useWorkerProgram {
+            let program = CLIProgressMIDINotes.workerProgram(workerID: workerID)
+            sampler.sendProgramChange(
+                program,
+                bankMSB: UInt8(kAUSampler_DefaultMelodicBankMSB),
+                bankLSB: UInt8(kAUSampler_DefaultBankLSB),
+                onChannel: channel
+            )
+        }
+        sampler.startNote(note, withVelocity: velocity, onChannel: channel)
+        let stopNote = note
+        let stopChannel = channel
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(durationMs) * 1_000_000)
+            guard generation == self.noteGeneration, self.isReady, let sampler = self.sampler else { return }
+            sampler.stopNote(stopNote, onChannel: stopChannel)
+        }
+    }
+
+    func playBatchComplete(workerCount: Int) {
+        ensureReady()
+        guard isReady, let sampler else { return }
+        let notes = CLIProgressMIDINotes.batchCompleteNotes(workerCount: workerCount)
+        for (index, note) in notes.enumerated() {
+            let channel = UInt8(index)
+            sampler.sendProgramChange(
+                0,
+                bankMSB: UInt8(kAUSampler_DefaultMelodicBankMSB),
+                bankLSB: UInt8(kAUSampler_DefaultBankLSB),
+                onChannel: channel
+            )
+            sampler.startNote(note, withVelocity: 92, onChannel: channel)
+            let n = note
+            let ch = channel
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 320_000_000)
+                guard self.isReady, let sampler = self.sampler else { return }
+                sampler.stopNote(n, onChannel: ch)
+            }
+        }
+    }
+
+    func shutdown() {
+        noteGeneration &+= 1
+        engine?.stop()
+        engine = nil
+        sampler = nil
+        isReady = false
+    }
 
     private func ensureReady() {
         guard !isReady else { return }
@@ -83,105 +145,88 @@ public actor CLIProgressMIDISoundboard {
             isReady = false
         }
     }
+}
 
-    private func play(
-        workerID: Int,
-        note: UInt8,
-        velocity: UInt8,
-        durationMs: Int,
-        useWorkerProgram: Bool
-    ) {
-        ensureReady()
-        guard isReady, let sampler else { return }
-        let channel = CLIProgressMIDINotes.workerChannel(workerID: workerID)
-        if useWorkerProgram {
-            let program = CLIProgressMIDINotes.workerProgram(workerID: workerID)
-            sampler.sendProgramChange(
-                program,
-                bankMSB: UInt8(kAUSampler_DefaultMelodicBankMSB),
-                bankLSB: UInt8(kAUSampler_DefaultBankLSB),
-                onChannel: channel
+/// Shared DLS synth; lazy start; notes scheduled on the main actor.
+public actor CLIProgressMIDISoundboard {
+    public static let shared = CLIProgressMIDISoundboard()
+
+    private var lastPulseTick: [Int: Int] = [:]
+    private var lastOverallMilestone = -1
+    private var isShutdown = false
+
+    private init() {}
+
+    public func playWorkerStart(workerID: Int) async {
+        guard !isShutdown else { return }
+        await MainActor.run {
+            CLIProgressMIDIEngine.shared.play(
+                workerID: workerID,
+                note: CLIProgressMIDINotes.startNote(workerID: workerID),
+                velocity: 88,
+                durationMs: 110,
+                useWorkerProgram: true
             )
         }
-        sampler.startNote(note, withVelocity: velocity, onChannel: channel)
-        let stopNote = note
-        let stopChannel = channel
-        let stopSampler = sampler
-        Task {
-            try? await Task.sleep(nanoseconds: UInt64(durationMs) * 1_000_000)
-            stopSampler.stopNote(stopNote, onChannel: stopChannel)
-        }
     }
 
-    public func playWorkerStart(workerID: Int) {
-        play(
-            workerID: workerID,
-            note: CLIProgressMIDINotes.startNote(workerID: workerID),
-            velocity: 88,
-            durationMs: 110,
-            useWorkerProgram: true
-        )
-    }
-
-    public func playWorkerPulse(workerID: Int, globalTick: Int) {
+    public func playWorkerPulse(workerID: Int, globalTick: Int) async {
+        guard !isShutdown else { return }
         guard CLIProgressMIDINotes.shouldPulse(workerID: workerID, globalTick: globalTick) else { return }
         if lastPulseTick[workerID] == globalTick { return }
         lastPulseTick[workerID] = globalTick
-        play(
-            workerID: workerID,
-            note: CLIProgressMIDINotes.pulseNote(workerID: workerID, globalTick: globalTick),
-            velocity: 42,
-            durationMs: 55,
-            useWorkerProgram: false
-        )
-    }
-
-    public func playWorkerComplete(workerID: Int) {
-        play(
-            workerID: workerID,
-            note: CLIProgressMIDINotes.completeNote(workerID: workerID),
-            velocity: 76,
-            durationMs: 140,
-            useWorkerProgram: true
-        )
-    }
-
-    public func playBatchComplete(workerCount: Int) {
-        ensureReady()
-        guard isReady, let sampler else { return }
-        let notes = CLIProgressMIDINotes.batchCompleteNotes(workerCount: workerCount)
-        for (index, note) in notes.enumerated() {
-            let channel = UInt8(index)
-            sampler.sendProgramChange(
-                0,
-                bankMSB: UInt8(kAUSampler_DefaultMelodicBankMSB),
-                bankLSB: UInt8(kAUSampler_DefaultBankLSB),
-                onChannel: channel
+        await MainActor.run {
+            CLIProgressMIDIEngine.shared.play(
+                workerID: workerID,
+                note: CLIProgressMIDINotes.pulseNote(workerID: workerID, globalTick: globalTick),
+                velocity: 42,
+                durationMs: 55,
+                useWorkerProgram: false
             )
-            sampler.startNote(note, withVelocity: 92, onChannel: channel)
-            let n = note
-            let ch = channel
-            let stopSampler = sampler
-            Task {
-                try? await Task.sleep(nanoseconds: 320_000_000)
-                stopSampler.stopNote(n, onChannel: ch)
-            }
         }
     }
 
-    public func playOverallMilestone(completed: Int, total: Int) {
-        guard total > 0 else { return }
+    public func playWorkerComplete(workerID: Int) async {
+        guard !isShutdown else { return }
+        await MainActor.run {
+            CLIProgressMIDIEngine.shared.play(
+                workerID: workerID,
+                note: CLIProgressMIDINotes.completeNote(workerID: workerID),
+                velocity: 76,
+                durationMs: 140,
+                useWorkerProgram: true
+            )
+        }
+    }
+
+    public func playBatchComplete(workerCount: Int) async {
+        guard !isShutdown else { return }
+        await MainActor.run {
+            CLIProgressMIDIEngine.shared.playBatchComplete(workerCount: workerCount)
+        }
+    }
+
+    public func playOverallMilestone(completed: Int, total: Int) async {
+        guard !isShutdown, total > 0 else { return }
         let milestone = (completed * 10) / total
         guard milestone > lastOverallMilestone, completed > 0 else { return }
         lastOverallMilestone = milestone
-        play(workerID: 0, note: UInt8(48 + milestone * 2), velocity: 50, durationMs: 70, useWorkerProgram: false)
+        await MainActor.run {
+            CLIProgressMIDIEngine.shared.play(
+                workerID: 0,
+                note: UInt8(48 + milestone * 2),
+                velocity: 50,
+                durationMs: 70,
+                useWorkerProgram: false
+            )
+        }
     }
 
-    public func shutdown() {
-        engine?.stop()
-        engine = nil
-        sampler = nil
-        isReady = false
+    public func shutdown() async {
+        isShutdown = true
+        await MainActor.run {
+            CLIProgressMIDIEngine.shared.shutdown()
+        }
     }
 }
 

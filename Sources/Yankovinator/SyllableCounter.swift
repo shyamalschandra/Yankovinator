@@ -11,6 +11,12 @@ public struct SyllableCounter {
     /// - Parameter word: The word to count syllables in
     /// - Returns: The number of syllables in the word
     public static func countSyllables(in word: String) -> Int {
+        NLConcurrency.synchronized {
+            countSyllablesUnsafe(in: word)
+        }
+    }
+
+    private static func countSyllablesUnsafe(in word: String) -> Int {
         let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         
         // Remove punctuation
@@ -86,7 +92,7 @@ public struct SyllableCounter {
         var totalSyllables = 0
         tokenizer.enumerateTokens(in: line.startIndex..<line.endIndex) { tokenRange, _ in
             let word = String(line[tokenRange])
-            totalSyllables += countSyllables(in: word)
+            totalSyllables += max(1, estimateSyllables(for: word.lowercased().filter { $0.isLetter }))
             return true
         }
         
@@ -116,7 +122,8 @@ public struct SyllableCounter {
         var wordSyllables: [(word: String, syllables: Int)] = []
         tokenizer.enumerateTokens(in: line.startIndex..<line.endIndex) { tokenRange, _ in
             let word = String(line[tokenRange])
-            let syllableCount = countSyllables(in: word)
+            let cleaned = word.lowercased().filter { $0.isLetter }
+            let syllableCount = cleaned.isEmpty ? 0 : max(1, estimateSyllables(for: cleaned))
             wordSyllables.append((word: word, syllables: syllableCount))
             return true
         }

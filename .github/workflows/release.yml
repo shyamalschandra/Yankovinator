@@ -261,6 +261,7 @@ jobs:
             Local AI parody generator using NaturalLanguage + Ollama (`llama3.2:3b`).
 
             ### What's new
+            - **v1.06.1:** Fix parallel batch trace trap — NL lock coverage, main-thread MIDI progress, TUI coalescing
             - **v1.06.0:** Batch-only CLI — require `--input-dir`, `--themes-dir`, `--output-dir`; removed lyrics positional, `--keywords` / `-k`, and single-file `--output`
             - **v1.05.0:** Up to 128 workers/consumers; `--consumers`; 64 cloud cap; 64 candidates
             - **v1.04:** `--candidates 10` ranks variants per song×theme; explosion is songs×themes×candidates; `--keep-candidates`

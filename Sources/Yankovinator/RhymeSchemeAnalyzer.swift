@@ -11,6 +11,12 @@ public struct RhymeSchemeAnalyzer {
     /// - Parameter lyrics: Array of lyric lines (non-empty lines only)
     /// - Returns: Array of rhyme group identifiers (A, B, C, etc.) and the detected scheme pattern
     public static func detectRhymeScheme(from lyrics: [String]) -> (rhymeGroups: [String], scheme: String) {
+        NLConcurrency.synchronized {
+            detectRhymeSchemeUnsafe(from: lyrics)
+        }
+    }
+
+    private static func detectRhymeSchemeUnsafe(from lyrics: [String]) -> (rhymeGroups: [String], scheme: String) {
         guard !lyrics.isEmpty else {
             return ([], "")
         }

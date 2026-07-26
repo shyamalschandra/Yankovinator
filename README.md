@@ -8,6 +8,8 @@ Contact **ssc56@duck.com** to license code for commercial and non-commercial pur
 
 Yankovinator is a Swift package that converts songs into parodies using Apple's NaturalLanguage framework and a local [Ollama](https://ollama.ai) LLM (`llama3.2:3b` by default). It preserves syllable structure, rhyme scheme, capitalization, and punctuation while steering lyrics with theme keywords.
 
+The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in `--input-dir`, one theme file per entry in `--themes-dir`, and read parodies from `--output-dir` as `<theme>/<song>.parody.txt`. Use **`benchmark`** for single-file timing, or the **Swift library** for one-off generation in code.
+
 **Website:** https://shyamalschandra.github.io/Yankovinator/
 
 ## Features
@@ -27,6 +29,7 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 - **ParodyFitScorer** global ranking; optional **`--fit-optimize`** batch hill-climbing
 - Parallel workers for batch jobs (`--workers` up to **128** / `--jobs`) with a **producer–consumer queue** (up to **128** concurrent consumers; optional **`--consumers`** cap)
 - Batch **TUI progress** on stderr: Unicode block bars, colors, emojis, and one live row per cloud worker (disable with `--no-progress`; plain text when not a TTY)
+- Batch-only **`yankovinator` CLI**: required `--input-dir`, `--themes-dir`, `--output-dir` (no single-file lyrics arg or `--keywords`)
 - Combinatorial batch: every song × every theme via `--input-dir` + `--themes-dir`
 - Multi-candidate ranking: `--candidates` up to **64** generates and scores variants per song×theme
 - CLI tools: `yankovinator`, `keyword-generator`, `benchmark`
@@ -46,11 +49,11 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.0**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.1**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.0/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.1/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/
@@ -91,9 +94,9 @@ Yankovinator ships three CLI tools:
 
 | Tool | Purpose |
 |---|---|
-| `yankovinator` | Generate parodies from lyrics + keywords |
+| `yankovinator` | Batch parodies: all songs in `--input-dir` × all themes in `--themes-dir` |
 | `keyword-generator` | Generate `keyword: definition` pairs from subjects |
-| `benchmark` | Measure generation performance |
+| `benchmark` | Measure generation performance (single lyrics + keywords file) |
 
 ### Keyword generator
 
@@ -117,25 +120,30 @@ swift run keyword-generator "ai" "space" "music" --workers 10 \
   --ollama-url https://ollama.example.com --output keywords.txt
 ```
 
-### Parody generator
+### Parody generator (batch)
 
-**Option 1 — Swift (development):**
+Every run is **songs × themes**. Each file in `--themes-dir` is a theme (`keyword: definition` lines). Outputs land under **`--output-dir/<theme-stem>/<song-stem>.parody.txt`**.
+
+**Swift (development):**
 
 ```bash
 swift run yankovinator --input-dir <songs-dir> --themes-dir <themes-dir> --output-dir <out-dir> [options]
 ```
 
-**Option 2 — wrapper script (handles CLI edge cases):**
+**Wrapper script** (trims stray whitespace from arguments):
 
 ```bash
 ./yankovinator.sh --input-dir <songs-dir> --themes-dir <themes-dir> --output-dir <out-dir> [options]
 ```
 
-**Options:**
+**Required:**
 
-- `--input-dir <dir>`: Directory of `.txt` lyrics files (required)
-- `--themes-dir <dir>`: Directory of theme keyword `.txt` files (required; `keyword: definition` per line)
+- `--input-dir <dir>`: Directory of `.txt` lyrics files
+- `--themes-dir <dir>`: Directory of theme keyword `.txt` files (`keyword: definition` per line)
 - `--output-dir <dir>`: Output root (`<theme>/<song>.parody.txt`)
+
+**Optional:**
+
 - `--ollama-url, -u <url>`: Ollama API base URL (local or cloud)
 - `--model, -m <name>`: Ollama model (default: `llama3.2:3b`)
 - `--workers, --jobs <n>`: Parallel worker count (1–**128**). Consumer pool = min(workers, 128, `OLLAMA_NUM_PARALLEL` on localhost) unless `--consumers` is set.
@@ -152,14 +160,32 @@ swift run yankovinator --input-dir <songs-dir> --themes-dir <themes-dir> --outpu
 - `--analyze, -a`: Show syllable analysis
 - `--verbose, -v`: Verbose output
 
+**Quick start (local Ollama):**
+
 ```bash
 mkdir -p songs themes out
 cp data/example_lyrics.txt songs/song.txt
 cp data/example_keywords.txt themes/space.txt
 
+swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out --verbose
+# → out/space/song.parody.txt
+```
+
+**Rank multiple candidates per song×theme:**
+
+```bash
 swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
-  --analyze \
-  --verbose
+  --candidates 10 --keep-candidates --verbose
+# Best: out/<theme>/<song>.parody.txt
+# All ranked: out/<theme>/<song>.candidates/
+# If songs×themes×candidates > 100, add --force
+```
+
+**Cloud Ollama (10 workers):**
+
+```bash
+swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
+  --ollama-url https://ollama.example.com --workers 10 --verbose
 ```
 
 **Ollama server parallelism (local `ollama serve`):**
@@ -181,41 +207,6 @@ The CLI reads `$OLLAMA_NUM_PARALLEL` on `localhost` or you can pass `--ollama-nu
 yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
   --workers 64 --ollama-num-workers 64 --no-cloud-prescription \
   --candidates 20 --fit-optimize --force --verbose
-```
-
-**Parallel batch (10 workers on cloud Ollama):**
-
-```bash
-mkdir -p songs themes out
-cp data/example_lyrics.txt songs/song1.txt
-cp data/example_lyrics.txt songs/song2.txt
-cp data/example_keywords.txt themes/space.txt
-
-swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
-  --ollama-url https://ollama.example.com \
-  --workers 10 \
-  --verbose
-```
-
-**Combinatorial batch (every song × every theme × 10 candidates):**
-
-```bash
-mkdir -p songs themes out
-cp data/example_lyrics.txt songs/song1.txt
-cp data/example_lyrics.txt songs/song2.txt
-cp data/example_keywords.txt themes/space.txt
-# add more theme keyword files under themes/
-
-swift run yankovinator --input-dir ./songs --themes-dir ./themes \
-  --output-dir ./out \
-  --ollama-url https://ollama.example.com \
-  --workers 10 \
-  --candidates 10 \
-  --keep-candidates \
-  --verbose
-# Writes best: out/<theme>/<song>.parody.txt
-# Ranked variants: out/<theme>/<song>.candidates/
-# If songs×themes×candidates > 100, add --force
 ```
 
 ### Benchmark
@@ -265,7 +256,23 @@ for line in parody {
 
 ## Input format
 
-### Lyrics file
+### Batch layout
+
+```
+songs/           # --input-dir: one .txt file per song (stem = job id)
+  twinkle.txt
+  verse2.txt
+themes/          # --themes-dir: one .txt file per theme
+  space.txt
+  science.txt
+out/             # --output-dir
+  space/
+    twinkle.parody.txt
+  science/
+    twinkle.parody.txt
+```
+
+### Lyrics file (one song)
 
 One line per verse (empty lines are preserved):
 
@@ -278,7 +285,7 @@ Like a diamond in the sky
 
 Sample: [`data/example_lyrics.txt`](data/example_lyrics.txt)
 
-### Keywords file
+### Theme / keywords file (one theme)
 
 Format: `keyword: definition`
 
@@ -322,6 +329,8 @@ npm run build   # GitHub Pages TypeScript
 | Resource | Description |
 |---|---|
 | [QUICK_START.md](QUICK_START.md) | Fast path from clone to first parody |
+| [RELEASE_NOTES_v1.06.1.md](RELEASE_NOTES_v1.06.1.md) | Latest release notes (parallel batch crash fix) |
+| [RELEASE_NOTES_v1.06.0.md](RELEASE_NOTES_v1.06.0.md) | Batch-only CLI |
 | [docs/README.md](docs/README.md) | GitHub Pages site source |
 | [docs/RELEASES.md](docs/RELEASES.md) | Binary release install guide |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Pages deployment status |

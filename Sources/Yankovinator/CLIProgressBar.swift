@@ -247,7 +247,10 @@ public actor CLIWorkerPoolProgress {
     /// Live line counter while a worker generates a song (cheap TUI update, coalesced redraw).
     public func postWorkerLineProgress(workerID: Int, line: Int, total: Int) {
         guard !finished, workerID >= 0, workerID < workerCount else { return }
-        guard case .working(let jobNumber, let tick, let startedAt, _, _) = slots[workerID] else { return }
+        guard case .working(let jobNumber, let tick, let startedAt, let prevLine, let prevTotal) = slots[workerID] else {
+            return
+        }
+        if prevLine == line, prevTotal == total { return }
         slots[workerID] = .working(
             jobNumber: jobNumber,
             tick: tick,

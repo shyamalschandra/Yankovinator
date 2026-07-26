@@ -392,17 +392,19 @@ public class ParodyGenerator {
     
     /// Extract words from a line (for tracking usage)
     private func extractWords(from line: String) -> Set<String> {
-        let tokenizer = NLTokenizer(unit: .word)
-        tokenizer.string = line
-        var words: Set<String> = []
-        tokenizer.enumerateTokens(in: line.startIndex..<line.endIndex) { tokenRange, _ in
-            let word = String(line[tokenRange]).lowercased().filter { $0.isLetter }
-            if !word.isEmpty {
-                words.insert(word)
+        NLConcurrency.synchronized {
+            let tokenizer = NLTokenizer(unit: .word)
+            tokenizer.string = line
+            var words: Set<String> = []
+            tokenizer.enumerateTokens(in: line.startIndex..<line.endIndex) { tokenRange, _ in
+                let word = String(line[tokenRange]).lowercased().filter { $0.isLetter }
+                if !word.isEmpty {
+                    words.insert(word)
+                }
+                return true
             }
-            return true
+            return words
         }
-        return words
     }
     
     /// Get word suggestions from OED + unsupervised embedding substitution.
@@ -794,28 +796,34 @@ public class ParodyGenerator {
     /// Extract capitalization pattern from a line
     /// Returns an array of booleans indicating which words should be capitalized
     private func extractCapitalizationPattern(from line: String) -> [Bool] {
-        let tokenizer = NLTokenizer(unit: .word)
-        tokenizer.string = line
-        
-        var capitalizationPattern: [Bool] = []
-        tokenizer.enumerateTokens(in: line.startIndex..<line.endIndex) { tokenRange, _ in
-            let word = String(line[tokenRange])
-            // Check if the first character is uppercase (ignoring punctuation)
-            let firstChar = word.first { $0.isLetter }
-            if let char = firstChar {
-                capitalizationPattern.append(char.isUppercase)
-            } else {
-                // If no letter found, default to false (lowercase)
-                capitalizationPattern.append(false)
+        NLConcurrency.synchronized {
+            let tokenizer = NLTokenizer(unit: .word)
+            tokenizer.string = line
+
+            var capitalizationPattern: [Bool] = []
+            tokenizer.enumerateTokens(in: line.startIndex..<line.endIndex) { tokenRange, _ in
+                let word = String(line[tokenRange])
+                let firstChar = word.first { $0.isLetter }
+                if let char = firstChar {
+                    capitalizationPattern.append(char.isUppercase)
+                } else {
+                    capitalizationPattern.append(false)
+                }
+                return true
             }
-            return true
+
+            return capitalizationPattern
         }
-        
-        return capitalizationPattern
     }
-    
+
     /// Apply capitalization and punctuation pattern from original line to generated line
     private func applyCapitalizationAndPunctuation(to generatedLine: String, from originalLine: String) -> String {
+        NLConcurrency.synchronized {
+            applyCapitalizationAndPunctuationUnsafe(to: generatedLine, from: originalLine)
+        }
+    }
+
+    private func applyCapitalizationAndPunctuationUnsafe(to generatedLine: String, from originalLine: String) -> String {
         // Collect ranges first — nested enumerateTokens on the same NLTokenizer is unsafe.
         let originalTokenizer = NLTokenizer(unit: .word)
         originalTokenizer.string = originalLine

@@ -2,7 +2,7 @@
 
 Yankovinator publishes pre-built macOS binaries so you can install without a Swift toolchain.
 
-**Current release:** [v1.06.0](https://github.com/shyamalschandra/Yankovinator/releases/tag/v1.06.0)
+**Current release:** [v1.06.1](https://github.com/shyamalschandra/Yankovinator/releases/tag/v1.06.1)
 
 ## What each archive contains
 
@@ -23,7 +23,7 @@ Yankovinator publishes pre-built macOS binaries so you can install without a Swi
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.0/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.1/yankovinator-universal.tar.gz
 
 # Verify checksum (compare to the release .sha256 asset)
 shasum -a 256 yankovinator-universal.tar.gz
@@ -74,8 +74,8 @@ Local formula template in this repo: [`Formula/yankovinator.rb`](../Formula/yank
 ### Automatic (GitHub Actions)
 
 ```bash
-git tag -a v1.06.0 -m "Release version 1.06.0"
-git push origin v1.06.0
+git tag -a v1.06.1 -m "Release version 1.06.1"
+git push origin v1.06.1
 ```
 
 The **Build and Release** workflow builds architecture artifacts, packages archives, and uploads release assets.

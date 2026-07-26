@@ -39,6 +39,22 @@ final class YankovinatorTests: XCTestCase {
         XCTAssertEqual(structure.count, lyrics.count)
     }
 
+    func testConcurrentNaturalLanguageAccess() async {
+        let lyrics = [
+            "Twinkle twinkle little star",
+            "How I wonder what you are",
+        ]
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<24 {
+                group.addTask {
+                    _ = RhymeSchemeAnalyzer.detectRhymeScheme(from: lyrics)
+                    _ = PartOfSpeechAnalyzer.analyzeLine(lyrics[0])
+                    _ = SyllableCounter.countSyllablesInLine(lyrics[1])
+                }
+            }
+        }
+    }
+
     func testParodyGeneration() async throws {
         // This is an integration test that requires Ollama
         // Skip if Ollama is not available
