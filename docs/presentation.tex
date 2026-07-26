@@ -142,13 +142,12 @@ stars: luminous celestial bodies
 \begin{frame}[fragile]
 \frametitle{CLI Usage}
 \begin{lstlisting}[language=bash]
-yankovinator data/example_lyrics.txt \
-  --keywords data/example_keywords.txt \
-  --ollama-url http://localhost:11434 \
-  --model llama3.2:3b \
-  --output parody.txt \
-  --analyze \
-  --verbose
+mkdir -p songs themes out
+cp data/example_lyrics.txt songs/song.txt
+cp data/example_keywords.txt themes/space.txt
+yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \\
+  --ollama-url http://localhost:11434 --model llama3.2:3b \\
+  --workers 10 --analyze --verbose
 \end{lstlisting}
 \end{frame}
 
@@ -182,7 +181,7 @@ Run: \texttt{export DEVELOPER\_DIR=/Applications/Xcode.app/Contents/Developer \&
     \item \texttt{brew install yankovinator}
     \item Start Ollama: \texttt{ollama serve}
     \item Pull model: \texttt{ollama pull llama3.2:3b}
-    \item Run: \texttt{yankovinator lyrics.txt}
+    \item Run: \texttt{yankovinator --input-dir songs --themes-dir themes --output-dir out}
 \end{enumerate}
 
 \textbf{From Source:}

@@ -46,11 +46,11 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.05.0**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.0**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.05.0/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.0/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/
@@ -122,24 +122,22 @@ swift run keyword-generator "ai" "space" "music" --workers 10 \
 **Option 1 — Swift (development):**
 
 ```bash
-swift run yankovinator <lyrics-file> [options]
+swift run yankovinator --input-dir <songs-dir> --themes-dir <themes-dir> --output-dir <out-dir> [options]
 ```
 
 **Option 2 — wrapper script (handles CLI edge cases):**
 
 ```bash
-./yankovinator.sh <lyrics-file> [options]
+./yankovinator.sh --input-dir <songs-dir> --themes-dir <themes-dir> --output-dir <out-dir> [options]
 ```
 
 **Options:**
 
-- `--keywords, -k <file>`: Keywords file (`keyword: definition`)
+- `--input-dir <dir>`: Directory of `.txt` lyrics files (required)
+- `--themes-dir <dir>`: Directory of theme keyword `.txt` files (required; `keyword: definition` per line)
+- `--output-dir <dir>`: Output root (`<theme>/<song>.parody.txt`)
 - `--ollama-url, -u <url>`: Ollama API base URL (local or cloud)
 - `--model, -m <name>`: Ollama model (default: `llama3.2:3b`)
-- `--output, -o <file>`: Output path for single-file mode (default: stdout)
-- `--input-dir <dir>`: Directory of `.txt` lyrics files (batch / parallel jobs)
-- `--themes-dir <dir>`: Directory of theme keyword `.txt` files; with `--input-dir` runs **every song × every theme**
-- `--output-dir <dir>`: Output directory for batch mode (`<song>.parody.txt`, or `<theme>/<song>.parody.txt` for cross-product)
 - `--workers, --jobs <n>`: Parallel worker count (1–**128**). Consumer pool = min(workers, 128, `OLLAMA_NUM_PARALLEL` on localhost) unless `--consumers` is set.
 - `--consumers <n>`: Cap in-flight consumer tasks (1–128; default follows `--workers`).
 - `--ollama-num-parallel <n>` (alias `--ollama-num-workers`): Ollama server `OLLAMA_NUM_PARALLEL` (or set env before `ollama serve`; see [Ollama FAQ](https://docs.ollama.com/faq)).
@@ -155,17 +153,13 @@ swift run yankovinator <lyrics-file> [options]
 - `--verbose, -v`: Verbose output
 
 ```bash
-swift run yankovinator data/example_lyrics.txt \
-  --keywords data/example_keywords.txt \
-  --output parody.txt \
+mkdir -p songs themes out
+cp data/example_lyrics.txt songs/song.txt
+cp data/example_keywords.txt themes/space.txt
+
+swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
   --analyze \
   --verbose
-```
-
-```bash
-./yankovinator.sh data/example_lyrics.txt \
-  --keywords data/example_keywords.txt \
-  --output parody.txt
 ```
 
 **Ollama server parallelism (local `ollama serve`):**
@@ -192,12 +186,12 @@ yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
 **Parallel batch (10 workers on cloud Ollama):**
 
 ```bash
-mkdir -p songs out
+mkdir -p songs themes out
 cp data/example_lyrics.txt songs/song1.txt
 cp data/example_lyrics.txt songs/song2.txt
+cp data/example_keywords.txt themes/space.txt
 
-swift run yankovinator --input-dir ./songs --output-dir ./out \
-  --keywords data/example_keywords.txt \
+swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
   --ollama-url https://ollama.example.com \
   --workers 10 \
   --verbose

@@ -75,10 +75,13 @@ Yankovinator consists of the following main components:
 The CLI tool provides a simple interface for generating parodies:
 
 \begin{lstlisting}
-yankovinator <lyrics-file> [--keywords <keywords-file>] 
-            [--ollama-url <url>] [--model <model-name>]
-            [--output <output-file>] [--analyze] [--verbose]
+yankovinator --input-dir <songs-dir> --themes-dir <themes-dir> \\
+            --output-dir <out-dir> [--workers <n>] [--candidates <n>] \\
+            [--ollama-url <url>] [--model <model-name>] \\
+            [--analyze] [--verbose] [--force]
 \end{lstlisting}
+
+Batch output layout: \texttt{<output-dir>/<theme>/<song>.parody.txt}. Each theme file is a \texttt{keyword: definition} list (same format as before).
 
 \subsection{Programmatic Usage}
 
@@ -302,9 +305,12 @@ swift test
 
 Sample inputs for local runs:
 \begin{lstlisting}[language=bash]
-swift run yankovinator data/example_lyrics.txt \
-  --keywords data/example_keywords.txt --verbose
-swift run benchmark --lyrics data/example_lyrics.txt \
+mkdir -p songs themes out
+cp data/example_lyrics.txt songs/song.txt
+cp data/example_keywords.txt themes/space.txt
+swift run yankovinator --input-dir ./songs --themes-dir ./themes \\
+  --output-dir ./out --verbose
+swift run benchmark --lyrics data/example_lyrics.txt \\
   --keywords data/example_keywords.txt --iterations 5
 \end{lstlisting}
 
@@ -372,7 +378,7 @@ ollama pull llama3.2
 
 \subsection{Example Input}
 
-\textbf{lyrics.txt:}
+\textbf{songs/song.txt:}
 \begin{lstlisting}
 Twinkle twinkle little star
 How I wonder what you are
@@ -380,11 +386,16 @@ Up above the world so high
 Like a diamond in the sky
 \end{lstlisting}
 
-\textbf{keywords.txt:}
+\textbf{themes/space.txt:}
 \begin{lstlisting}
 science: the study of natural phenomena
 space: the physical universe beyond Earth
 exploration: the action of traveling to discover
+\end{lstlisting}
+
+\textbf{Run:}
+\begin{lstlisting}[language=bash]
+yankovinator --input-dir songs --themes-dir themes --output-dir out
 \end{lstlisting}
 
 \subsection{Example Output}

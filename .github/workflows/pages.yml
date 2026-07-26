@@ -11,6 +11,7 @@ on:
       - 'package-lock.json'
       - 'tsconfig.json'
       - 'README.md'
+      - 'RELEASE_NOTES_v*.md'
   workflow_dispatch:
 
 permissions:

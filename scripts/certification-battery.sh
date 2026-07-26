@@ -42,11 +42,14 @@ echo "$H" | rg -q "ollama-timeout" && ok "help: ollama-timeout" || bad "help: ol
 echo "$H" | rg -q "candidates" && ok "help: candidates" || bad "help: candidates" ""
 
 echo "======== 5) Validation errors ========"
-WOUT=$($Y data/example_lyrics.txt --workers 0 2>&1 || true)
+VAL_DIR=$(mktemp -d)
+mkdir -p "$VAL_DIR/s" "$VAL_DIR/t" "$VAL_DIR/o"
+WOUT=$($Y --input-dir "$VAL_DIR/s" --themes-dir "$VAL_DIR/t" --output-dir "$VAL_DIR/o" --workers 0 2>&1 || true)
 if echo "$WOUT" | rg -qi "Workers must"; then ok "workers=0 rejected"; else bad "workers=0 rejected" "$WOUT"; fi
-COUT=$($Y data/example_lyrics.txt --candidates 0 2>&1 || true)
+COUT=$($Y --input-dir "$VAL_DIR/s" --themes-dir "$VAL_DIR/t" --output-dir "$VAL_DIR/o" --candidates 0 2>&1 || true)
 if echo "$COUT" | rg -qi "Candidates must"; then ok "candidates=0 rejected"; else bad "candidates=0 rejected" "$COUT"; fi
-IOUT=$($Y --input-dir "/tmp/nonexistent-yank-empty-$$" --output-dir "/tmp/out-$$" 2>&1 || true)
+rm -rf "$VAL_DIR"
+IOUT=$($Y --input-dir "/tmp/nonexistent-yank-empty-$$" --themes-dir "/tmp/themes-yank-$$" --output-dir "/tmp/out-$$" 2>&1 || true)
 if echo "$IOUT" | rg -qi "No \\.txt lyrics files found in input directory"; then ok "bad input-dir"; else bad "bad input-dir" "$IOUT"; fi
 ALIAS_DIR=$(mktemp -d)
 mkdir -p "$ALIAS_DIR/s" "$ALIAS_DIR/t" "$ALIAS_DIR/o"
@@ -67,38 +70,41 @@ else
 fi
 
 if [[ "$OLLAMA_UP" == "1" ]]; then
-  echo "======== 8) E2E single file ========"
+  echo "======== 8) E2E batch one song × one theme ========"
   TMP=$(mktemp -d)
-  cp data/example_lyrics.txt "$TMP/s.txt"
-  cp data/example_keywords.txt "$TMP/k.txt"
-  if $Y "$TMP/s.txt" --keywords "$TMP/k.txt" --output "$TMP/p.txt" 2>&1 | tail -3; then
-    [[ -s "$TMP/p.txt" ]] && ok "single parody E2E" || bad "single parody E2E" "empty output"
+  mkdir -p "$TMP/songs" "$TMP/themes" "$TMP/out"
+  cp data/example_lyrics.txt "$TMP/songs/s.txt"
+  cp data/example_keywords.txt "$TMP/themes/t1.txt"
+  if $Y --input-dir "$TMP/songs" --themes-dir "$TMP/themes" --output-dir "$TMP/out" --no-progress 2>&1 | tail -3; then
+    [[ -s "$TMP/out/t1/s.parody.txt" ]] && ok "batch parody E2E" || bad "batch parody E2E" "empty output"
   else
-    bad "single parody E2E" ""
+    bad "batch parody E2E" ""
   fi
 
   echo "======== 9) E2E candidates=3 ========"
-  if $Y "$TMP/s.txt" --keywords "$TMP/k.txt" --candidates 3 --no-progress --output "$TMP/best.txt" 2>&1 | tail -5; then
-    [[ -s "$TMP/best.txt" ]] && ok "candidates E2E" || bad "candidates E2E" ""
+  rm -rf "$TMP/out"
+  if $Y --input-dir "$TMP/songs" --themes-dir "$TMP/themes" --output-dir "$TMP/out" --candidates 3 --no-progress 2>&1 | tail -5; then
+    [[ -s "$TMP/out/t1/s.parody.txt" ]] && ok "candidates E2E" || bad "candidates E2E" ""
   else
     bad "candidates E2E" ""
   fi
 
-  echo "======== 10) E2E batch 2 songs shared theme ========"
-  mkdir -p "$TMP/songs" "$TMP/out"
+  echo "======== 10) E2E batch 2 songs × one theme ========"
   cp data/example_lyrics.txt "$TMP/songs/a.txt"
   cp data/example_lyrics.txt "$TMP/songs/b.txt"
-  if $Y --input-dir "$TMP/songs" --output-dir "$TMP/out" --keywords "$TMP/k.txt" --workers 4 --candidates 2 --no-progress 2>&1 | tail -5; then
-    [[ -f "$TMP/out/a.parody.txt" && -f "$TMP/out/b.parody.txt" ]] && ok "batch shared theme×candidates" || bad "batch outputs missing" ""
+  rm -rf "$TMP/out2"
+  mkdir -p "$TMP/out2"
+  if $Y --input-dir "$TMP/songs" --themes-dir "$TMP/themes" --output-dir "$TMP/out2" --workers 4 --candidates 2 --no-progress 2>&1 | tail -5; then
+    [[ -f "$TMP/out2/t1/a.parody.txt" && -f "$TMP/out2/t1/b.parody.txt" ]] && ok "batch songs×theme×candidates" || bad "batch outputs missing" ""
   else
-    bad "batch shared theme" ""
+    bad "batch songs×theme" ""
   fi
 
-  echo "======== 11) E2E cross-product (mini) ========"
-  mkdir -p "$TMP/themes" "$TMP/cout"
-  cp data/example_keywords.txt "$TMP/themes/t1.txt"
+  echo "======== 11) E2E cross-product (mini, force) ========"
+  mkdir -p "$TMP/cout"
+  cp data/example_keywords.txt "$TMP/themes/t2.txt"
   if $Y --input-dir "$TMP/songs" --themes-dir "$TMP/themes" --output-dir "$TMP/cout" --workers 10 --candidates 2 --no-progress --force 2>&1 | tail -5; then
-    [[ -f "$TMP/cout/t1/a.parody.txt" ]] && ok "cross-product×candidates" || bad "cross-product outputs" ""
+    [[ -f "$TMP/cout/t1/a.parody.txt" && -f "$TMP/cout/t2/a.parody.txt" ]] && ok "cross-product×candidates" || bad "cross-product outputs" ""
   else
     bad "cross-product" ""
   fi

@@ -58,12 +58,14 @@ Integration tests need Ollama running with `llama3.2:3b`.
 swift run keyword-generator "artificial intelligence" --count 10 --output keywords.txt
 ```
 
-### Generate a parody
+### Generate a parody (batch)
 
 ```bash
-swift run yankovinator data/example_lyrics.txt \
-  --keywords data/example_keywords.txt \
-  --output parody.txt \
+mkdir -p songs themes out
+cp data/example_lyrics.txt songs/song.txt
+cp data/example_keywords.txt themes/space.txt
+
+swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
   --verbose
 ```
 
@@ -79,12 +81,12 @@ swift run benchmark \
 ### Parallel batch on cloud Ollama (10 workers)
 
 ```bash
-mkdir -p songs out
+mkdir -p songs themes out
 cp data/example_lyrics.txt songs/a.txt
 cp data/example_lyrics.txt songs/b.txt
+cp data/example_keywords.txt themes/space.txt
 
-swift run yankovinator --input-dir ./songs --output-dir ./out \
-  --keywords data/example_keywords.txt \
+swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
   --ollama-url https://ollama.example.com \
   --workers 10 \
   --verbose

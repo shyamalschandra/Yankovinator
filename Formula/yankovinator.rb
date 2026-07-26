@@ -27,11 +27,11 @@ class Yankovinator < Formula
         # or: brew install ollama && ollama serve
         ollama pull llama3.2:3b
 
-      Parallel batch against cloud Ollama (producer-consumer, max 10 consumers):
-        yankovinator --input-dir ./songs --output-dir ./out \\
-          --keywords themes.txt --ollama-url https://ollama.example.com --workers 10
+      Batch (songs × themes):
+        yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \\
+          --ollama-url https://ollama.example.com --workers 10
 
-      Combinatorial (songs × themes × 10 candidates):
+      Many candidates per song×theme:
         yankovinator --input-dir ./songs --themes-dir ./themes \\
           --output-dir ./out --workers 10 --candidates 10 --keep-candidates
         # best: out/<theme>/<song>.parody.txt

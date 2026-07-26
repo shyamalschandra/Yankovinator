@@ -304,7 +304,7 @@ public enum ParallelJobError: Error, CustomStringConvertible, Sendable {
         case .emptyThemesDirectory(let path):
             return "No .txt theme/keyword files found in themes directory: \(path)"
         case .missingOutputDirectory:
-            return "--output-dir is required for batch jobs (--input-dir and/or --themes-dir)."
+            return "--output-dir is required (use with --input-dir and --themes-dir)."
         case .cannotCreateOutputDirectory(let path):
             return "Could not create output directory: \(path)"
         case .crossProductRequiresForce(let songCount, let themeCount, let candidates, let total, let threshold):
@@ -326,7 +326,7 @@ public struct ParodyBatchJob: Sendable {
     public let songId: String
     public let themeId: String?
     public let lyricsPath: String
-    /// Theme keywords file for this job. `nil` means use the shared CLI `--keywords` / default theme.
+    /// Theme keywords file for this job. `nil` uses a built-in default theme dictionary.
     public let keywordsPath: String?
     public let outputPath: String
 
