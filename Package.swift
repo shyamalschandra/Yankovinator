@@ -30,17 +30,9 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "YankovinatorNcurses",
-            path: "Sources/YankovinatorNcurses",
-            publicHeadersPath: "include",
-            linkerSettings: [
-                .linkedLibrary("ncurses", .when(platforms: [.macOS])),
-            ]),
-        .target(
             name: "Yankovinator",
             dependencies: [
                 .product(name: "AsyncHTTPClient", package: "async-http-client"),
-                "YankovinatorNcurses",
             ]),
         .executableTarget(
             name: "YankovinatorCLI",

@@ -99,7 +99,7 @@ public actor CLIProgressBar {
     private var latestStatus: String = ""
     private let refresh = CLITUIRefreshLoop()
     private let midi: CLIProgressMIDISoundboard?
-    private let usesNcurses: Bool
+    private let usesFixedScreen: Bool
 
     public init(
         total: Int,
@@ -113,7 +113,7 @@ public actor CLIProgressBar {
         self.width = max(8, width)
         self.theme = theme
         self.midi = enableMIDI && TerminalProgress.isInteractive ? CLIProgressMIDISoundboard.shared : nil
-        self.usesNcurses = TerminalProgress.isInteractive && NcursesProgressScreen.acquire()
+        self.usesFixedScreen = TerminalProgress.isInteractive && FixedScreenProgress.acquire()
         Task { await refresh.setRedrawHandler { [weak self] in await self?.renderNow() } }
     }
 
@@ -144,8 +144,8 @@ public actor CLIProgressBar {
             await midi.playBatchComplete(workerCount: 1)
             await midi.shutdown()
         }
-        if usesNcurses {
-            NcursesProgressScreen.release()
+        if usesFixedScreen {
+            FixedScreenProgress.release()
         }
         if theme.useEmoji {
             fputs("\(theme.wrap("✅ Done", ANSI.fgGreen))\n", stderr)
@@ -166,8 +166,8 @@ public actor CLIProgressBar {
             framed: false,
             statusRail: latestStatus
         )
-        if usesNcurses {
-            _ = NcursesProgressScreen.render(lines: [line])
+        if usesFixedScreen {
+            _ = FixedScreenProgress.render(lines: [line])
         } else {
             fputs("\r\u{001B}[2K\(line)", stderr)
             fflush(stderr)
@@ -201,7 +201,7 @@ public actor CLIWorkerPoolProgress {
     private let refresh = CLITUIRefreshLoop()
     private var animationTask: Task<Void, Never>?
     private let midi: CLIProgressMIDISoundboard?
-    private let usesNcurses: Bool
+    private let usesFixedScreen: Bool
 
     public init(
         total: Int,
@@ -222,7 +222,7 @@ public actor CLIWorkerPoolProgress {
         self.workerBusySeconds = Array(repeating: 0, count: self.workerCount)
         self.batchStartedAt = Date()
         self.midi = enableMIDI && TerminalProgress.isInteractive ? CLIProgressMIDISoundboard.shared : nil
-        self.usesNcurses = TerminalProgress.isInteractive && NcursesProgressScreen.acquire()
+        self.usesFixedScreen = TerminalProgress.isInteractive && FixedScreenProgress.acquire()
 
         if TerminalProgress.isInteractive {
             animationTask = Task { [weak self] in
@@ -261,7 +261,7 @@ public actor CLIWorkerPoolProgress {
         guard case .working(let jobNumber, let tick, let startedAt, let prevLine, let prevTotal) = slots[workerID] else {
             return
         }
-        if prevLine == line, prevTotal == total { return }
+        if let prevLine, let prevTotal, prevLine == line, prevTotal == total { return }
         slots[workerID] = .working(
             jobNumber: jobNumber,
             tick: tick,
@@ -311,8 +311,8 @@ public actor CLIWorkerPoolProgress {
             await midi.playBatchComplete(workerCount: workerCount)
             await midi.shutdown()
         }
-        if usesNcurses {
-            NcursesProgressScreen.release()
+        if usesFixedScreen {
+            FixedScreenProgress.release()
         }
         let doneLine = theme.useEmoji
             ? theme.wrap("✅ All generations complete", ANSI.fgGreen + ANSI.bold)
@@ -377,7 +377,7 @@ public actor CLIWorkerPoolProgress {
             batchEtaSeconds: batchETA,
             slots: formattedSlots
         )
-        CLIProgressFormatting.writeMultiline(lines, previousLineCount: &previousLineCount, useNcurses: usesNcurses)
+        CLIProgressFormatting.writeMultiline(lines, previousLineCount: &previousLineCount, useFixedScreen: usesFixedScreen)
     }
 
     private func spentSeconds(workerID: Int, slot: Slot, now: Date) -> TimeInterval {
@@ -632,8 +632,8 @@ enum CLIProgressFormatting {
         return String(chars)
     }
 
-    static func writeMultiline(_ lines: [String], previousLineCount: inout Int, useNcurses: Bool = false) {
-        if useNcurses, NcursesProgressScreen.render(lines: lines) {
+    static func writeMultiline(_ lines: [String], previousLineCount: inout Int, useFixedScreen: Bool = false) {
+        if useFixedScreen, FixedScreenProgress.render(lines: lines) {
             previousLineCount = lines.count
             return
         }
