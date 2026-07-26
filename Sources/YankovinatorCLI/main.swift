@@ -72,13 +72,19 @@ struct YankovinatorCLI: AsyncParsableCommand {
 
     @Option(
         name: [.customLong("workers"), .customLong("jobs")],
-        help: "Requested Ollama worker count (1-32; default 1). Match OLLAMA_NUM_PARALLEL on the server (see docs.ollama.com/faq)."
+        help: "Parallel Ollama worker count (1-\(ParallelJobRunner.maxWorkers); default 1). Match OLLAMA_NUM_PARALLEL on the server."
     )
     var workers: Int = 1
 
     @Option(
         name: .long,
-        help: "Parody candidates per song×theme (1-32; default 1; use 10 to rank and keep the best)"
+        help: "Cap in-flight consumer tasks (defaults to --workers; 1-\(ParallelJobRunner.maxConcurrentConsumers))"
+    )
+    var consumers: Int?
+
+    @Option(
+        name: .long,
+        help: "Parody candidates per song×theme (1-\(CandidateParodyGenerator.maxCandidates); default 1; use 10 to rank and keep the best)"
     )
     var candidates: Int = 1
 
@@ -214,6 +220,14 @@ struct YankovinatorCLI: AsyncParsableCommand {
             throw ValidationError(error.description)
         }
 
+        if let consumers {
+            guard consumers >= 1, consumers <= ParallelJobRunner.maxConcurrentConsumers else {
+                throw ValidationError(
+                    "Consumers must be between 1 and \(ParallelJobRunner.maxConcurrentConsumers) (got \(consumers))."
+                )
+            }
+        }
+
         if let timeout = ollamaTimeout {
             guard timeout >= 30, timeout <= 900 else {
                 throw ValidationError("Ollama timeout must be between 30 and 900 seconds.")
@@ -274,7 +288,8 @@ struct YankovinatorCLI: AsyncParsableCommand {
             requestedWorkers: effectiveRequestedWorkers ?? workers,
             ollamaNumParallel: resolvedOllamaNumParallel(),
             model: model,
-            applyCloudPrescription: !noCloudPrescription && effectiveRequestedWorkers == nil
+            applyCloudPrescription: !noCloudPrescription && effectiveRequestedWorkers == nil,
+            consumerOverride: consumers
         )
     }
 

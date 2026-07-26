@@ -12,13 +12,13 @@ public enum ParallelJobRunner {
     public static let defaultWorkers = 1
 
     /// Suggested worker count for cloud Ollama batch runs.
-    public static let recommendedCloudWorkers = 10
+    public static let recommendedCloudWorkers = 32
 
-    /// Hard upper bound for CLI `--workers` (queue can hold more; consumers stay capped).
-    public static let maxWorkers = 32
+    /// Hard upper bound for CLI `--workers` (producer-consumer queue depth).
+    public static let maxWorkers = 128
 
-    /// Maximum concurrent consumer workers (producer-consumer pool size).
-    public static let maxConcurrentConsumers = 10
+    /// Maximum concurrent consumer workers (in-flight jobs). Match `--workers` up to this cap.
+    public static let maxConcurrentConsumers = 128
 
     /// Effective consumer count: at most `maxConcurrentConsumers` workers run at once.
     /// When `ollamaNumParallel` is set (Ollama server `OLLAMA_NUM_PARALLEL`), consumers are capped to match.
@@ -26,8 +26,12 @@ public enum ParallelJobRunner {
         requestedWorkers: Int,
         ollamaNumParallel: Int? = nil,
         model: String? = nil,
-        applyCloudPrescription: Bool = true
+        applyCloudPrescription: Bool = true,
+        consumerOverride: Int? = nil
     ) -> Int {
+        if let consumerOverride {
+            return max(1, min(consumerOverride, maxConcurrentConsumers))
+        }
         var requested = clampWorkers(requestedWorkers)
         if applyCloudPrescription, let model, CloudBatchPrescription.isHeavyCloudModel(model) {
             requested = min(requested, CloudBatchPrescription.heavyCloudMaxConsumers)
@@ -65,7 +69,7 @@ public enum ParallelJobRunner {
     /// Map `items` through `operation` using a producer-consumer queue.
     ///
     /// - Producer: enqueues all items in order.
-    /// - Consumers: fixed pool of size `consumerPoolSize(workers)` (max 10) pulls jobs concurrently.
+    /// - Consumers: fixed pool of size `consumerPoolSize(workers)` pulls jobs concurrently (up to `maxConcurrentConsumers`).
     /// - Results preserve input order.
     public static func map<Item: Sendable, Result: Sendable>(
         items: [Item],

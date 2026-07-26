@@ -10,7 +10,8 @@ final class ParallelJobRunnerTests: XCTestCase {
         XCTAssertEqual(ParallelJobRunner.clampWorkers(0), 1)
         XCTAssertEqual(ParallelJobRunner.clampWorkers(-3), 1)
         XCTAssertEqual(ParallelJobRunner.clampWorkers(10), 10)
-        XCTAssertEqual(ParallelJobRunner.clampWorkers(100), ParallelJobRunner.maxWorkers)
+        XCTAssertEqual(ParallelJobRunner.clampWorkers(100), 100)
+        XCTAssertEqual(ParallelJobRunner.clampWorkers(200), ParallelJobRunner.maxWorkers)
     }
 
     func testValidateWorkers() throws {
@@ -62,14 +63,15 @@ final class ParallelJobRunnerTests: XCTestCase {
     }
 
     func testRecommendedCloudWorkersIsTen() {
-        XCTAssertEqual(ParallelJobRunner.recommendedCloudWorkers, 10)
-        XCTAssertEqual(ParallelJobRunner.maxConcurrentConsumers, 10)
+        XCTAssertEqual(ParallelJobRunner.recommendedCloudWorkers, 32)
+        XCTAssertEqual(ParallelJobRunner.maxConcurrentConsumers, 128)
     }
 
     func testConsumerPoolSizeCapsAtTen() {
         XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 1), 1)
         XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 10), 10)
-        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 32), 10)
+        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 128), 128)
+        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 200), 128)
     }
 
     func testConsumerPoolRespectsOllamaNumParallel() {
@@ -94,7 +96,7 @@ final class ParallelJobRunnerTests: XCTestCase {
         let counter = Counter()
         let items = Array(0..<40)
 
-        _ = try await ParallelJobRunner.map(items: items, workers: 32) { _ in
+        _ = try await ParallelJobRunner.map(items: items, workers: 64) { _ in
             await counter.enter()
             try await Task.sleep(nanoseconds: 15_000_000)
             await counter.leave()

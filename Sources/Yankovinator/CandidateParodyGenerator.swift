@@ -25,7 +25,7 @@ public struct ParodyCandidateResult: Sendable, Equatable {
 public enum CandidateParodyGenerator {
     public static let defaultCandidates = 1
     public static let recommendedCandidates = 10
-    public static let maxCandidates = 32
+    public static let maxCandidates = 64
 
     public static func clampCandidates(_ requested: Int) -> Int {
         max(1, min(requested, maxCandidates))

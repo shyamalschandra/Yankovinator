@@ -54,9 +54,15 @@ public class OllamaClient {
 
         let concurrent = ParallelJobRunner.consumerPoolSize(
             requestedWorkers: workers,
-            ollamaNumParallel: ollamaNumParallel
+            ollamaNumParallel: ollamaNumParallel,
+            consumerOverride: nil
         )
-        workerConnectionHint = max(4, min(concurrent + 4, 64))
+        workerConnectionHint = max(8, min(concurrent + 12, 512))
+
+        if let existing = sharedHTTPClient {
+            try? existing.syncShutdown()
+            sharedHTTPClient = nil
+        }
 
         if let timeout = timeoutOverride {
             generateTimeoutSeconds = timeout
@@ -84,7 +90,7 @@ public class OllamaClient {
         )
         configuration.connectionPool.idleTimeout = .seconds(120)
         configuration.connectionPool.concurrentHTTP1ConnectionsPerHostSoftLimit =
-            max(8, workerConnectionHint)
+            max(16, workerConnectionHint)
         return configuration
     }
     

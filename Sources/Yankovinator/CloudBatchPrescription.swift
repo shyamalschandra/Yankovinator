@@ -5,8 +5,8 @@ import Foundation
 
 /// Recommended runtime adjustments when batching against heavy `:cloud` models.
 public enum CloudBatchPrescription: Sendable {
-    /// Max concurrent consumer workers for heavy cloud models (client-side cap; model may be fast).
-    public static let heavyCloudMaxConsumers = 4
+    /// Max concurrent consumer workers for heavy `:cloud` models when cloud prescription is enabled.
+    public static let heavyCloudMaxConsumers = 64
 
     /// Per-request timeout when CLI did not pass `--ollama-timeout`.
     public static let heavyCloudTimeoutSeconds = 600

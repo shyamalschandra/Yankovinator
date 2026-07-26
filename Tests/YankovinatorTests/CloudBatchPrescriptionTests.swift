@@ -14,11 +14,11 @@ final class CloudBatchPrescriptionTests: XCTestCase {
     func testPlanCapsWorkersForHeavyCloud() {
         let plan = CloudBatchPrescription.plan(
             model: "qwen3.5:397b-cloud",
-            requestedWorkers: 10,
+            requestedWorkers: 100,
             ollamaTimeout: nil,
             enabled: true
         )
-        XCTAssertEqual(plan.effectiveWorkers, 4)
+        XCTAssertEqual(plan.effectiveWorkers, 64)
         XCTAssertTrue(plan.appliedWorkerCap)
         XCTAssertEqual(plan.appliedTimeoutSeconds, 600)
         XCTAssertTrue(plan.skipLLMCoherenceInBatch)
@@ -37,8 +37,8 @@ final class CloudBatchPrescriptionTests: XCTestCase {
 
     func testConsumerPoolSizeWithModel() {
         XCTAssertEqual(
-            ParallelJobRunner.consumerPoolSize(requestedWorkers: 10, model: "qwen3.5:397b-cloud"),
-            4
+            ParallelJobRunner.consumerPoolSize(requestedWorkers: 100, model: "qwen3.5:397b-cloud"),
+            64
         )
         XCTAssertEqual(
             ParallelJobRunner.consumerPoolSize(
@@ -47,6 +47,10 @@ final class CloudBatchPrescriptionTests: XCTestCase {
                 applyCloudPrescription: false
             ),
             10
+        )
+        XCTAssertEqual(
+            ParallelJobRunner.consumerPoolSize(requestedWorkers: 80, consumerOverride: 48),
+            48
         )
     }
 }

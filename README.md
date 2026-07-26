@@ -23,10 +23,12 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 - Unsupervised NLP helpers: embedding lexical substitution, rhyme clustering, next-line coherence critic
 - NaturalLanguage framework integration
 - Local or cloud Ollama integration (`llama3.2:3b` by default; any `--ollama-url`)
-- Parallel workers for batch jobs (`--workers 10` / `--jobs 10`) with a **producer–consumer queue** (max **10** concurrent consumers)
+- Word-by-word **part-of-speech** matching and **OED**-filtered substitutions (v1.04.9+)
+- **ParodyFitScorer** global ranking; optional **`--fit-optimize`** batch hill-climbing
+- Parallel workers for batch jobs (`--workers` up to **128** / `--jobs`) with a **producer–consumer queue** (up to **128** concurrent consumers; optional **`--consumers`** cap)
 - Batch **TUI progress** on stderr: Unicode block bars, colors, emojis, and one live row per cloud worker (disable with `--no-progress`; plain text when not a TTY)
 - Combinatorial batch: every song × every theme via `--input-dir` + `--themes-dir`
-- Multi-candidate ranking: `--candidates 10` generates and scores variants per song×theme
+- Multi-candidate ranking: `--candidates` up to **64** generates and scores variants per song×theme
 - CLI tools: `yankovinator`, `keyword-generator`, `benchmark`
 - XCTest suite (unit + Ollama integration tests)
 - LaTeX/Beamer docs and GitHub Pages site
@@ -44,11 +46,11 @@ Yankovinator is a Swift package that converts songs into parodies using Apple's 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.04.9**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.05.0**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.04.9/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.05.0/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/
@@ -105,7 +107,7 @@ swift run keyword-generator <subject1> [subject2] ... [options]
 - `--ollama-url, -u <url>`: Ollama API base URL (local or cloud; default: `http://localhost:11434`)
 - `--model, -m <name>`: Ollama model (default: `llama3.2:3b`)
 - `--output, -o <file>`: Output path (default: stdout)
-- `--workers, --jobs <n>`: Max parallel subject jobs (1–32; use `10` for cloud)
+- `--workers, --jobs <n>`: Max parallel subject jobs (1–**128**)
 - `--verbose, -v`: Verbose output
 
 ```bash
@@ -138,9 +140,11 @@ swift run yankovinator <lyrics-file> [options]
 - `--input-dir <dir>`: Directory of `.txt` lyrics files (batch / parallel jobs)
 - `--themes-dir <dir>`: Directory of theme keyword `.txt` files; with `--input-dir` runs **every song × every theme**
 - `--output-dir <dir>`: Output directory for batch mode (`<song>.parody.txt`, or `<theme>/<song>.parody.txt` for cross-product)
-- `--workers, --jobs <n>`: Requested worker count (1–32). Consumer pool = min(workers, 10, `OLLAMA_NUM_PARALLEL` on localhost).
+- `--workers, --jobs <n>`: Parallel worker count (1–**128**). Consumer pool = min(workers, 128, `OLLAMA_NUM_PARALLEL` on localhost) unless `--consumers` is set.
+- `--consumers <n>`: Cap in-flight consumer tasks (1–128; default follows `--workers`).
 - `--ollama-num-parallel <n>` (alias `--ollama-num-workers`): Ollama server `OLLAMA_NUM_PARALLEL` (or set env before `ollama serve`; see [Ollama FAQ](https://docs.ollama.com/faq)).
-- `--candidates <n>`: Generate N ranked variants per song×theme (1–32; use `10` for combinatorial ranking)
+- `--candidates <n>`: Generate N ranked variants per song×theme (1–**64**)
+- `--fit-optimize`: Extra Ollama passes to hill-climb syllable/POS/coherence fit in batch (slower, higher scores)
 - `--keep-candidates`: Also write ranked variants under `<song>.candidates/`
 - `--force`: Allow songs×themes×candidates totals larger than 100 generations
 - `--ollama-timeout <sec>`: Per-request Ollama HTTP timeout (30–900; heavy `:cloud` models default to 600s)
@@ -175,7 +179,15 @@ ollama serve
 
 The CLI reads `$OLLAMA_NUM_PARALLEL` on `localhost` or you can pass `--ollama-num-parallel 10`.
 
-**Heavy cloud batch (`qwen3.5:397b-cloud`, etc.):** stderr **prescription** caps parallel HTTP workers (not model speed), sets **600s** timeout if unset, uses **one generate per line** in batch with slim prompts, and **checkpoint** writes best `.parody.txt` after each candidate. Override with `--no-cloud-prescription`.
+**Heavy cloud batch (`qwen3.5:397b-cloud`, etc.):** stderr **prescription** may cap parallel HTTP workers at **64**, sets **600s** timeout if unset, and uses batch fast path with checkpoints. Use **`--no-cloud-prescription`** for the full `--workers` count (up to 128).
+
+**High-throughput cloud batch (64 workers):**
+
+```bash
+yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
+  --workers 64 --ollama-num-workers 64 --no-cloud-prescription \
+  --candidates 20 --fit-optimize --force --verbose
+```
 
 **Parallel batch (10 workers on cloud Ollama):**
 
