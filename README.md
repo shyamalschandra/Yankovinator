@@ -28,7 +28,7 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 - Word-by-word **part-of-speech** matching and **OED**-filtered substitutions (v1.04.9+)
 - **ParodyFitScorer** global ranking; optional **`--fit-optimize`** batch hill-climbing
 - Parallel workers for batch jobs (`--workers` up to **128** / `--jobs`) with a **producer–consumer queue** (up to **128** concurrent consumers; optional **`--consumers`** cap)
-- Batch **TUI progress** on stderr: Unicode block bars, colors, emojis, and one live row per cloud worker (disable with `--no-progress`; plain text when not a TTY)
+- Batch **TUI progress** on stderr (macOS: **ncurses** alternate screen — no scroll during run); Unicode bars, emojis, one row per worker (`--no-progress` for plain logs)
 - Batch-only **`yankovinator` CLI**: required `--input-dir`, `--themes-dir`, `--output-dir` (no single-file lyrics arg or `--keywords`)
 - Combinatorial batch: every song × every theme via `--input-dir` + `--themes-dir`
 - Multi-candidate ranking: `--candidates` up to **64** generates and scores variants per song×theme
@@ -49,11 +49,11 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.1**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.2**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.1/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.2/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator keyword-generator /usr/local/bin/
@@ -329,7 +329,8 @@ npm run build   # GitHub Pages TypeScript
 | Resource | Description |
 |---|---|
 | [QUICK_START.md](QUICK_START.md) | Fast path from clone to first parody |
-| [RELEASE_NOTES_v1.06.1.md](RELEASE_NOTES_v1.06.1.md) | Latest release notes (parallel batch crash fix) |
+| [RELEASE_NOTES_v1.06.2.md](RELEASE_NOTES_v1.06.2.md) | Latest release notes (ncurses fixed-screen TUI) |
+| [RELEASE_NOTES_v1.06.1.md](RELEASE_NOTES_v1.06.1.md) | Parallel batch crash fix |
 | [RELEASE_NOTES_v1.06.0.md](RELEASE_NOTES_v1.06.0.md) | Batch-only CLI |
 | [docs/README.md](docs/README.md) | GitHub Pages site source |
 | [docs/RELEASES.md](docs/RELEASES.md) | Binary release install guide |
