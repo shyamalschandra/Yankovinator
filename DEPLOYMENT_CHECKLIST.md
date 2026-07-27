@@ -4,12 +4,12 @@
 
 ## Pre-release
 
-- [ ] Source builds: `swift build` / `swift build -c release`
-- [ ] XCTest suite green with Xcode developer dir (`swift test`)
-- [ ] Certification battery: `./scripts/certification-battery.sh` (unit, regression, UX, A/B, blackbox, E2E, fit-optimize)
-- [ ] Report committed: `docs/certification-latest.txt`
-- [ ] Docs aligned (README, `docs/CERTIFICATION.md`, `docs/RELEASES.md`, Pages workflow)
-- [ ] `RELEASE_NOTES_v1.06.8.md` ready
+- [x] Source builds: `swift build` / `swift build -c release`
+- [x] XCTest suite green with Xcode developer dir (`swift test`)
+- [x] Certification battery: `./scripts/certification-battery.sh` (unit, regression, UX, A/B, blackbox, E2E, fit-optimize)
+- [x] Report committed: `docs/certification-latest.txt`
+- [x] Docs aligned (README, `docs/CERTIFICATION.md`, `docs/RELEASES.md`, Pages workflow)
+- [x] `RELEASE_NOTES_v1.06.8.md` ready
 
 ## Release steps
 
