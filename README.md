@@ -49,11 +49,11 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.5**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.6**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.5/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.6/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator yankovinator-tui keyword-generator /usr/local/bin/
@@ -72,7 +72,7 @@ See [docs/RELEASES.md](docs/RELEASES.md) for architecture-specific downloads and
 brew tap shyamalschandra/yankovinator
 brew install yankovinator
 
-yankovinator --version          # → 1.06.5+
+yankovinator --version          # → 1.06.6+
 yankovinator --help
 keyword-generator --help
 ```
@@ -340,7 +340,8 @@ npm run build   # GitHub Pages TypeScript
 | Resource | Description |
 |---|---|
 | [QUICK_START.md](QUICK_START.md) | Fast path from clone to first parody |
-| [RELEASE_NOTES_v1.06.5.md](RELEASE_NOTES_v1.06.5.md) | Latest release (segfault fix + resume + Rust TUI) |
+| [RELEASE_NOTES_v1.06.6.md](RELEASE_NOTES_v1.06.6.md) | Latest release (PATH TUI resolve + no Swift multiline segfault) |
+| [RELEASE_NOTES_v1.06.5.md](RELEASE_NOTES_v1.06.5.md) | Prior (MIDI prewarm / resume / Rust TUI) |
 | [docs/CERTIFICATION.md](docs/CERTIFICATION.md) | Certification battery (unit, E2E, blackbox) |
 | [RELEASE_NOTES_v1.06.4.md](RELEASE_NOTES_v1.06.4.md) | Resume checkpoint + Rust TUI |
 | [RELEASE_NOTES_v1.06.3.md](RELEASE_NOTES_v1.06.3.md) | Prior release (ANSI alt-screen TUI fix) |
