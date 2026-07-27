@@ -31,6 +31,12 @@ public struct UnsupervisedRhymeClustering {
 
     /// Cluster rhyme scheme for non-empty lyric lines.
     public func clusterRhymeScheme(from lyrics: [String]) -> ClusterResult {
+        NLConcurrency.synchronized {
+            clusterRhymeSchemeUnsafe(from: lyrics)
+        }
+    }
+
+    private func clusterRhymeSchemeUnsafe(from lyrics: [String]) -> ClusterResult {
         guard !lyrics.isEmpty else {
             return ClusterResult(rhymeGroups: [], scheme: "", lastWords: [], method: "empty")
         }

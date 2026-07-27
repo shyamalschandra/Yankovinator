@@ -60,6 +60,10 @@ final class CLIProgressMIDIEngine {
 
     private init() {}
 
+    func prewarm() {
+        ensureReady()
+    }
+
     func play(
         workerID: Int,
         note: UInt8,
@@ -157,6 +161,13 @@ public actor CLIProgressMIDISoundboard {
 
     private init() {}
 
+    public func prewarm() async {
+        guard !isShutdown else { return }
+        await MainActor.run {
+            CLIProgressMIDIEngine.shared.prewarm()
+        }
+    }
+
     public func playWorkerStart(workerID: Int) async {
         guard !isShutdown else { return }
         await MainActor.run {
@@ -234,6 +245,7 @@ public actor CLIProgressMIDISoundboard {
 
 public actor CLIProgressMIDISoundboard {
     public static let shared = CLIProgressMIDISoundboard()
+    public func prewarm() async {}
     public func playWorkerStart(workerID: Int) async {}
     public func playWorkerPulse(workerID: Int, globalTick: Int) async {}
     public func playWorkerComplete(workerID: Int) async {}

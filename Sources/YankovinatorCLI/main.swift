@@ -377,7 +377,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
             }
         }
         // Touch shared dictionary once (background load) instead of per worker.
-        _ = OEDDictionary.shared
+        OEDDictionary.shared.waitUntilLoaded(timeoutSeconds: 5)
 
         let rx = CloudBatchPrescription.plan(
             model: model,
@@ -398,6 +398,9 @@ struct YankovinatorCLI: AsyncParsableCommand {
         let showProgress = !noProgress && generations > 1 && pendingGenerations > 0
         let poolSize = consumerPoolSize(effectiveRequestedWorkers: rx.effectiveWorkers)
         let serverParallel = resolvedOllamaNumParallel()
+        if showProgress && TerminalProgress.isInteractive && poolSize > 1 && midiProgress {
+            await CLIProgressMIDISoundboard.shared.prewarm()
+        }
         let progressHandle: CLIWorkerPoolProgress? =
             (showProgress && TerminalProgress.isInteractive && poolSize > 1)
             ? CLIWorkerPoolProgress(

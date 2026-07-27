@@ -241,12 +241,16 @@ public actor CLIWorkerPoolProgress {
         }
         self.rustTUI = rust
         self.usesRustTUI = rust != nil
-        self.usesFixedScreen = TerminalProgress.isInteractive
-            && TerminalProgress.supportsUnicodeTUI
-            && !(rust != nil)
-            && FixedScreenProgress.acquire()
+        // Never use Swift alternate-screen for multi-worker pools (segfaults with MIDI + parallel redraw).
+        self.usesFixedScreen = false
         if usesRustTUI {
             StderrGate.setRustTUIActive(true)
+        } else if TerminalProgress.isInteractive, workerCount > 1 {
+            fputs(
+                "ℹ️  For stable UTF-8 progress with many workers, install yankovinator-tui next to yankovinator (see README).\n",
+                stderr
+            )
+            fflush(stderr)
         }
 
         if TerminalProgress.isInteractive {
@@ -370,7 +374,7 @@ public actor CLIWorkerPoolProgress {
         }
         guard !workingIDs.isEmpty else { return }
         animationTick &+= 1
-        if let midi {
+        if let midi, workerCount <= 6 {
             let tick = animationTick
             for workerID in workingIDs {
                 Task { await midi.playWorkerPulse(workerID: workerID, globalTick: tick) }
