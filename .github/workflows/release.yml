@@ -72,13 +72,17 @@ jobs:
           set -euo pipefail
           source "$HOME/.cargo/env" 2>/dev/null || true
           if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            rustup target add x86_64-apple-darwin
             cd tui
-            rm -rf target
-            arch -x86_64 cargo build --release
+            # Cross-compile from arm64 host — do not use `arch -x86_64 cargo`
+            # (Homebrew/arm64 cargo is not a valid x86_64 executable).
+            cargo build --release --target x86_64-apple-darwin
             cd ..
             mkdir -p dist/x86_64
-            cp tui/target/release/yankovinator-tui dist/x86_64/yankovinator-tui
+            cp tui/target/x86_64-apple-darwin/release/yankovinator-tui dist/x86_64/yankovinator-tui
             chmod +x dist/x86_64/yankovinator-tui
+          else
+            echo "Skipping x86_64 yankovinator-tui (Rosetta unavailable)"
           fi
       
       - name: Build for x86_64 (via Rosetta)
@@ -185,6 +189,16 @@ jobs:
               cp dist/arm64/benchmark dist/universal/benchmark
               chmod +x dist/universal/benchmark
             fi
+            if [ -f dist/x86_64/yankovinator-tui ] && [ -f dist/arm64/yankovinator-tui ]; then
+              lipo -create \
+                dist/x86_64/yankovinator-tui \
+                dist/arm64/yankovinator-tui \
+                -output dist/universal/yankovinator-tui
+              chmod +x dist/universal/yankovinator-tui
+            elif [ -f dist/arm64/yankovinator-tui ]; then
+              cp dist/arm64/yankovinator-tui dist/universal/yankovinator-tui
+              chmod +x dist/universal/yankovinator-tui
+            fi
           else
             # If x86_64 build failed, use arm64 as universal (works via Rosetta)
             echo "x86_64 build not available, using arm64 binary (works on Intel via Rosetta)"
@@ -193,6 +207,10 @@ jobs:
             if [ -f dist/arm64/benchmark ]; then
               cp dist/arm64/benchmark dist/universal/benchmark
               chmod +x dist/universal/benchmark
+            fi
+            if [ -f dist/arm64/yankovinator-tui ]; then
+              cp dist/arm64/yankovinator-tui dist/universal/yankovinator-tui
+              chmod +x dist/universal/yankovinator-tui
             fi
           fi
           
@@ -208,27 +226,22 @@ jobs:
       
       - name: Create archives
         run: |
-          cd dist/universal
-          if [ -f benchmark ]; then
-            tar -czf ../yankovinator-universal.tar.gz yankovinator keyword-generator benchmark
-          else
-            tar -czf ../yankovinator-universal.tar.gz yankovinator keyword-generator
+          pack() {
+            local dir="$1"
+            local out="$2"
+            (
+              cd "$dir"
+              extras=""
+              [ -f yankovinator-tui ] && extras="$extras yankovinator-tui"
+              [ -f benchmark ] && extras="$extras benchmark"
+              tar -czf "$out" yankovinator keyword-generator $extras
+            )
+          }
+          pack dist/universal "$(pwd)/dist/yankovinator-universal.tar.gz"
+          pack dist/arm64 "$(pwd)/dist/yankovinator-arm64.tar.gz"
+          if [ -f dist/x86_64/yankovinator ]; then
+            pack dist/x86_64 "$(pwd)/dist/yankovinator-x86_64.tar.gz"
           fi
-          cd ../arm64
-          if [ -f benchmark ]; then
-            tar -czf ../yankovinator-arm64.tar.gz yankovinator keyword-generator benchmark
-          else
-            tar -czf ../yankovinator-arm64.tar.gz yankovinator keyword-generator
-          fi
-          if [ -f ../x86_64/yankovinator ]; then
-            cd ../x86_64
-            if [ -f benchmark ]; then
-              tar -czf ../yankovinator-x86_64.tar.gz yankovinator keyword-generator benchmark
-            else
-              tar -czf ../yankovinator-x86_64.tar.gz yankovinator keyword-generator
-            fi
-          fi
-          cd ../..
       
       - name: Upload universal binary
         uses: actions/upload-artifact@v4
