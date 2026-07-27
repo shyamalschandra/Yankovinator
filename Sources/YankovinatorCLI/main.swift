@@ -22,7 +22,8 @@ struct YankovinatorCLI: AsyncParsableCommand {
           # Optional: --keep-candidates writes ranked variants
           # If songs×themes×candidates > 100, add --force
           # Stop/restart: progress is checkpointed under --output-dir/.yankovinator (use --fresh-batch to reset)
-        """
+        """,
+        version: "1.06.5"
     )
 
     @Option(name: [.long, .customShort("u")], help: "Ollama API base URL (local or cloud)")
@@ -321,6 +322,11 @@ struct YankovinatorCLI: AsyncParsableCommand {
             print("")
         }
 
+        if verbose {
+            fputs("ℹ️  Preparing batch (checkpoint, lyrics, dictionary, workers)…\n", stderr)
+            fflush(stderr)
+        }
+
         let log = JobLog()
         let ollamaURL = self.ollamaURL
         let model = self.model
@@ -348,6 +354,8 @@ struct YankovinatorCLI: AsyncParsableCommand {
             resumeStore = try BatchResumeStore(outputRoot: outputRoot, manifest: resumeManifest, fresh: freshBatch)
         } catch let error as BatchResumeError {
             throw ValidationError(error.description)
+        } catch {
+            throw ValidationError("Batch checkpoint error: \(error)")
         }
 
         var scoredPreloaded: [ScoredExpansion] = []

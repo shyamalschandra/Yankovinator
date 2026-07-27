@@ -75,14 +75,49 @@ private struct RustTUIQuitEvent: Encodable {
     let t = "quit"
 }
 
-/// Child process + stdin pipe; all writes serialized on this actor.
+/// Child process + stdin pipe; process starts on first `initialize` (after MIDI prewarm).
 public actor RustTUIProcess {
-    private let process: Process
-    private let stdinHandle: FileHandle
+    private let executablePath: String
+    private var process: Process?
+    private var stdinHandle: FileHandle?
     private var started = false
     private var closed = false
 
     public init?(executablePath: String) {
+        guard FileManager.default.isExecutableFile(atPath: executablePath) else { return nil }
+        self.executablePath = executablePath
+    }
+
+    public func initialize(total: Int, workers: Int, label: String) throws {
+        guard !started, !closed else { return }
+        try launchIfNeeded()
+        started = true
+        try sendInit(total: total, workers: workers, label: label)
+    }
+
+    public func sendSnapshot(_ snap: RustTUISnapshot) throws {
+        guard !closed else { return }
+        if !started {
+            try launchIfNeeded()
+            started = true
+        }
+        try writeJSON(snap)
+    }
+
+    public func shutdown() {
+        guard !closed else { return }
+        closed = true
+        try? writeJSON(RustTUIQuitEvent())
+        try? stdinHandle?.close()
+        if let process, process.isRunning {
+            process.waitUntilExit()
+        }
+        process = nil
+        stdinHandle = nil
+    }
+
+    private func launchIfNeeded() throws {
+        guard process == nil else { return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = []
@@ -93,21 +128,10 @@ public actor RustTUIProcess {
         let pipe = Pipe()
         process.standardInput = pipe
         process.standardOutput = FileHandle.nullDevice
-        // TUI draws on stderr (Swift owns stdout for optional verbose `print`)
         process.standardError = nil
+        try process.run()
         self.process = process
         self.stdinHandle = pipe.fileHandleForWriting
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-    }
-
-    public func initialize(total: Int, workers: Int, label: String) throws {
-        guard !started else { return }
-        started = true
-        try sendInit(total: total, workers: workers, label: label)
     }
 
     private func sendInit(total: Int, workers: Int, label: String) throws {
@@ -120,22 +144,8 @@ public actor RustTUIProcess {
         )
     }
 
-    public func sendSnapshot(_ snap: RustTUISnapshot) throws {
-        guard !closed else { return }
-        try writeJSON(snap)
-    }
-
-    public func shutdown() {
-        guard !closed else { return }
-        closed = true
-        try? writeJSON(RustTUIQuitEvent())
-        try? stdinHandle.close()
-        if process.isRunning {
-            process.waitUntilExit()
-        }
-    }
-
     private func writeJSON<T: Encodable>(_ value: T) throws {
+        guard let stdinHandle else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         var data = try encoder.encode(value)

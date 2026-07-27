@@ -15,6 +15,7 @@ class Yankovinator < Formula
 
   def install
     bin.install "yankovinator"
+    bin.install "yankovinator-tui" if File.exist?("yankovinator-tui")
     bin.install "keyword-generator"
     bin.install "benchmark" if File.exist?("benchmark")
   end
