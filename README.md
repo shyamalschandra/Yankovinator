@@ -72,11 +72,16 @@ See [docs/RELEASES.md](docs/RELEASES.md) for architecture-specific downloads and
 brew tap shyamalschandra/yankovinator
 brew install yankovinator
 
+yankovinator --version          # → 1.06.5+
 yankovinator --help
 keyword-generator --help
 ```
 
-The formula installs pre-built binaries from GitHub Releases.
+Installs pre-built binaries from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (`yankovinator`, `yankovinator-tui`, `keyword-generator`, `benchmark`). Tap: [homebrew-yankovinator](https://github.com/shyamalschandra/homebrew-yankovinator).
+
+```bash
+brew update && brew upgrade yankovinator
+```
 
 ### Build from source
 
