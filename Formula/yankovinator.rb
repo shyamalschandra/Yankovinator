@@ -5,38 +5,44 @@
 #   brew install yankovinator
 
 class Yankovinator < Formula
-  desc "Convert songs into parodies with theme-based constraints using llama on Ollama"
+  desc "Convert songs into parodies with theme-based constraints using Ollama"
   homepage "https://github.com/shyamalschandra/Yankovinator"
   url "https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.5/yankovinator-universal.tar.gz"
   sha256 "f5335f151f938be2699106d0ab568216b6346210ab25aabfa5210a167d2e57ee"
+  version "1.06.5"
   license :cannot_represent
 
   depends_on macos: :ventura
 
+  livecheck do
+    url :stable
+    strategy :github_latest
+  end
+
   def install
     bin.install "yankovinator"
-    bin.install "yankovinator-tui" if File.exist?("yankovinator-tui")
     bin.install "keyword-generator"
+    bin.install "yankovinator-tui" if File.exist?("yankovinator-tui")
     bin.install "benchmark" if File.exist?("benchmark")
   end
 
   def caveats
     <<~EOS
-      Yankovinator requires Ollama (local or cloud) with the llama3.2:3b model:
+      Yankovinator requires Ollama (local or cloud) with a model such as llama3.2:3b:
 
         brew install --cask ollama-app
         # or: brew install ollama && ollama serve
         ollama pull llama3.2:3b
 
-      Batch (songs × themes):
+      Batch (every song × every theme):
         yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \\
-          --ollama-url https://ollama.example.com --workers 10
+          --workers 10 --candidates 10 --keep-candidates --force
 
-      Many candidates per song×theme:
-        yankovinator --input-dir ./songs --themes-dir ./themes \\
-          --output-dir ./out --workers 10 --candidates 10 --keep-candidates
-        # best: out/<theme>/<song>.parody.txt
-        # add --force if songs×themes×candidates > 100
+      Resume after Ctrl+C: re-run the same command (checkpoint in --output-dir/.yankovinator).
+      Reset checkpoint: add --fresh-batch.
+
+      Interactive progress: yankovinator-tui is installed beside yankovinator (Rust/ratatui).
+      Disable: YANKOVINATOR_RUST_TUI=0
 
       Docs: https://github.com/shyamalschandra/Yankovinator
       Site: https://shyamalschandra.github.io/Yankovinator/
@@ -44,8 +50,11 @@ class Yankovinator < Formula
   end
 
   test do
+    assert_equal "1.06.5", shell_output("#{bin}/yankovinator --version").strip
     assert_match "USAGE", shell_output("#{bin}/yankovinator --help")
+    assert_match "fresh-batch", shell_output("#{bin}/yankovinator --help")
     assert_match "USAGE", shell_output("#{bin}/keyword-generator --help")
     assert_match "USAGE", shell_output("#{bin}/benchmark --help") if (bin/"benchmark").exist?
+    assert_predicate bin/"yankovinator-tui", :exist?
   end
 end
