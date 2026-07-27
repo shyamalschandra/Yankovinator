@@ -2,7 +2,7 @@
 
 Yankovinator publishes pre-built macOS binaries so you can install without a Swift toolchain.
 
-**Current release:** [v1.06.7](https://github.com/shyamalschandra/Yankovinator/releases/tag/v1.06.7)
+**Current release:** [v1.06.8](https://github.com/shyamalschandra/Yankovinator/releases/tag/v1.06.8)
 
 ## What each archive contains
 
@@ -24,7 +24,7 @@ Yankovinator publishes pre-built macOS binaries so you can install without a Swi
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.7/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.8/yankovinator-universal.tar.gz
 
 # Verify checksum (compare to the release .sha256 asset)
 shasum -a 256 yankovinator-universal.tar.gz
@@ -59,24 +59,27 @@ Binaries still require a running Ollama instance and the `llama3.2:3b` model. Se
 ```bash
 brew tap shyamalschandra/yankovinator
 brew install yankovinator
+# or upgrade:
+brew update && brew upgrade shyamalschandra/yankovinator/yankovinator
+yankovinator --version   # → 1.06.8+
 ```
 
-After a new GitHub release, update the tap formula version + SHA256:
+After a new GitHub release, sync the tap from this repo:
 
 ```bash
-shasum -a 256 yankovinator-universal.tar.gz
-# edit Formula/yankovinator.rb in the tap, then commit/push
+./update-homebrew-tap.sh 1.06.8
 ```
 
-Local formula template in this repo: [`Formula/yankovinator.rb`](../Formula/yankovinator.rb).
+Local formula template: [`Formula/yankovinator.rb`](../Formula/yankovinator.rb). Tap: [homebrew-yankovinator](https://github.com/shyamalschandra/homebrew-yankovinator).
 
 ## Creating a release
 
 ### Automatic (GitHub Actions)
 
 ```bash
-git tag -a v1.06.2 -m "Release version 1.06.2"
-git push origin v1.06.2
+./scripts/certification-battery.sh   # must pass
+git tag -a v1.06.8 -m "Release version 1.06.8"
+git push origin v1.06.8
 ```
 
 The **Build and Release** workflow builds architecture artifacts, packages archives, and uploads release assets.

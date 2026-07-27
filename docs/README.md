@@ -13,6 +13,8 @@ Source for the Yankovinator website deployed from this `docs/` directory.
 | `script.ts` | TypeScript UI source (edit this) |
 | `script.js` | Compiled JS from `tsc` (generated) |
 | `RELEASES.md` | Binary release install notes |
+| `CERTIFICATION.md` | Release certification battery guide |
+| `certification-latest.txt` | Latest local certification report |
 | `DEPLOYMENT.md` | Pages deployment status |
 | `yankovinator.tex` | Technical paper |
 | `presentation.tex` | Beamer slides |

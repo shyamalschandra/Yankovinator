@@ -49,11 +49,11 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.7**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.8**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.7/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.8/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator yankovinator-tui keyword-generator /usr/local/bin/
@@ -72,7 +72,7 @@ See [docs/RELEASES.md](docs/RELEASES.md) for architecture-specific downloads and
 brew tap shyamalschandra/yankovinator
 brew install yankovinator
 
-yankovinator --version          # → 1.06.7+
+yankovinator --version          # → 1.06.8+
 yankovinator --help
 keyword-generator --help
 ```
@@ -335,15 +335,25 @@ swift run benchmark --help
 npm run build   # GitHub Pages TypeScript
 ```
 
+Full release gate (unit, regression, UX, A/B, blackbox, Ollama E2E, fit-optimize):
+
+```bash
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+./scripts/certification-battery.sh
+```
+
+See [docs/CERTIFICATION.md](docs/CERTIFICATION.md). Latest run summary: [docs/certification-latest.txt](docs/certification-latest.txt).
+
 ## Documentation
 
 | Resource | Description |
 |---|---|
 | [QUICK_START.md](QUICK_START.md) | Fast path from clone to first parody |
-| [RELEASE_NOTES_v1.06.7.md](RELEASE_NOTES_v1.06.7.md) | Latest (fit-optimize parallel NL segfault fix) |
+| [RELEASE_NOTES_v1.06.8.md](RELEASE_NOTES_v1.06.8.md) | Latest (expanded certification battery + docs/Pages) |
+| [RELEASE_NOTES_v1.06.7.md](RELEASE_NOTES_v1.06.7.md) | Fit-optimize parallel NL segfault fix |
 | [RELEASE_NOTES_v1.06.6.md](RELEASE_NOTES_v1.06.6.md) | PATH TUI resolve + no Swift multiline segfault |
 | [RELEASE_NOTES_v1.06.5.md](RELEASE_NOTES_v1.06.5.md) | Prior (MIDI prewarm / resume / Rust TUI) |
-| [docs/CERTIFICATION.md](docs/CERTIFICATION.md) | Certification battery (unit, E2E, blackbox) |
+| [docs/CERTIFICATION.md](docs/CERTIFICATION.md) | Certification battery (unit, regression, UX, A/B, blackbox, E2E) |
 | [RELEASE_NOTES_v1.06.4.md](RELEASE_NOTES_v1.06.4.md) | Resume checkpoint + Rust TUI |
 | [RELEASE_NOTES_v1.06.3.md](RELEASE_NOTES_v1.06.3.md) | Prior release (ANSI alt-screen TUI fix) |
 | [RELEASE_NOTES_v1.06.2.md](RELEASE_NOTES_v1.06.2.md) | Superseded ncurses experiment |

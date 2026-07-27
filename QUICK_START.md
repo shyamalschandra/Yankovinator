@@ -108,10 +108,14 @@ Best outputs land at `out/<theme>/<song>.parody.txt`. Effective generations = `s
 
 ### Certification battery (releases)
 
+Unit, regression, UX, A/B, blackbox, Ollama E2E, and `--fit-optimize` concurrency:
+
 ```bash
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ./scripts/certification-battery.sh
 ```
+
+Guide: [docs/CERTIFICATION.md](docs/CERTIFICATION.md). Report: [docs/certification-latest.txt](docs/certification-latest.txt).
 
 ## Tools
 

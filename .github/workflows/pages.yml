@@ -83,13 +83,13 @@ jobs:
           done
 
           # Supporting markdown pages linked from the site/repo docs
-          for md in README.md RELEASES.md DEPLOYMENT.md CERTIFICATION.md; do
+          for md in README.md RELEASES.md DEPLOYMENT.md CERTIFICATION.md certification-latest.txt; do
             if [ -f "docs/$md" ]; then
               cp "docs/$md" _site/
             fi
           done
 
-          for note in RELEASE_NOTES_v1.06.7.md RELEASE_NOTES_v1.06.6.md RELEASE_NOTES_v1.06.5.md; do
+          for note in RELEASE_NOTES_v1.06.8.md RELEASE_NOTES_v1.06.7.md RELEASE_NOTES_v1.06.6.md RELEASE_NOTES_v1.06.5.md; do
             if [ -f "$note" ]; then
               cp "$note" _site/
             fi

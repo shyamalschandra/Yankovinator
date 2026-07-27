@@ -1,0 +1,59 @@
+Yankovinator certification report
+Generated: 2026-07-27T23:16:30Z
+Expected version: 1.06.8
+Host: Darwin 25.5.0 arm64
+Pass: 53  Fail: 0
+
+PASS  swift build debug
+PASS  swift build release
+PASS  swift test
+PASS  yankovinator --help
+PASS  keyword-generator --help
+PASS  benchmark --help
+PASS  version == 1.06.8
+PASS  help: no-progress
+PASS  help: midi-progress
+PASS  help: no-cloud-prescription
+PASS  help: candidates
+PASS  help: fresh-batch
+PASS  help: fit-optimize
+PASS  help: keep-candidates
+PASS  help: force
+PASS  help: workers
+PASS  help: consumer pool note
+PASS  help: ollama-num-parallel
+PASS  help: ollama-num-workers alias
+PASS  help: ollama-timeout
+PASS  cargo build yankovinator-tui
+PASS  rust tui blackbox
+PASS  filter:BatchResumeStoreTests
+PASS  filter:YankovinatorRustTUITests
+PASS  filter:ParallelJobRunnerTests
+PASS  filter:ParodyFitScorerTests
+PASS  filter:CloudBatchPrescriptionTests
+PASS  filter:CandidateParodyGeneratorTests
+PASS  regression: concurrent NL
+PASS  regression: rhyme labels
+PASS  A/B: rust tui default enabled
+PASS  A/B: rust tui opt-out env
+PASS  A/B: yankovinator-tui on PATH
+PASS  A/B: YANKOVINATOR_TUI_PATH override
+PASS  blackbox: workers=0 rejected
+PASS  blackbox: candidates=0 rejected
+PASS  blackbox: bad input-dir
+PASS  blackbox: ollama-num-workers alias
+PASS  blackbox: fingerprint mismatch asks --fresh-batch
+PASS  npm run build
+PASS  ollama http
+PASS  E2E: batch parody
+PASS  E2E: candidates
+PASS  E2E: songs×theme×candidates
+PASS  E2E: cross-product×candidates
+PASS  E2E: keyword-generator
+PASS  E2E: benchmark
+PASS  E2E: resume checkpoint dir
+PASS  E2E: resume manifest
+PASS  E2E: fresh-batch clears checkpoint
+PASS  E2E: fit-optimize workers=4
+PASS  A/B: --no-progress path
+PASS  A/B: progress-enabled path
