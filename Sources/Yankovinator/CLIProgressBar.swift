@@ -231,8 +231,7 @@ public actor CLIWorkerPoolProgress {
         self.slots = Array(repeating: .idle, count: self.workerCount)
         self.workerBusySeconds = Array(repeating: 0, count: self.workerCount)
         self.batchStartedAt = Date()
-        self.midi = enableMIDI && TerminalProgress.isInteractive ? CLIProgressMIDISoundboard.shared : nil
-
+        // MIDI only with Rust TUI — pairing CoreAudio with Swift multiline redraw segfaults.
         var rust: RustTUIProcess?
         if TerminalProgress.isInteractive,
            YankovinatorRustTUI.isEnabled,
@@ -241,13 +240,16 @@ public actor CLIWorkerPoolProgress {
         }
         self.rustTUI = rust
         self.usesRustTUI = rust != nil
-        // Never use Swift alternate-screen for multi-worker pools (segfaults with MIDI + parallel redraw).
+        self.midi = (enableMIDI && usesRustTUI && TerminalProgress.isInteractive)
+            ? CLIProgressMIDISoundboard.shared
+            : nil
+        // Never use Swift alternate-screen or multiline cursor-up for multi-worker pools.
         self.usesFixedScreen = false
         if usesRustTUI {
             StderrGate.setRustTUIActive(true)
         } else if TerminalProgress.isInteractive, workerCount > 1 {
             fputs(
-                "ℹ️  For stable UTF-8 progress with many workers, install yankovinator-tui next to yankovinator (see README).\n",
+                "ℹ️  yankovinator-tui not found — using single-line progress (safe). Install sidecar next to yankovinator or: brew reinstall yankovinator\n",
                 stderr
             )
             fflush(stderr)
@@ -407,21 +409,6 @@ public actor CLIWorkerPoolProgress {
         let batchSpent = now.timeIntervalSince(batchStartedAt)
         let batchETA = estimatedBatchRemaining(now: now)
 
-        let lines = CLIProgressFormatting.workerPoolLines(
-            label: label,
-            completed: completed,
-            total: total,
-            overallWidth: overallWidth,
-            workerCount: workerCount,
-            workerBarWidth: workerBarWidth,
-            tick: animationTick,
-            theme: theme,
-            statusRail: latestStatus,
-            recentMessages: Array(statusHistory.suffix(2)),
-            batchSpentSeconds: batchSpent,
-            batchEtaSeconds: batchETA,
-            slots: formattedSlots
-        )
         if usesRustTUI, let rustTUI {
             let snap = RustTUISnapshot.fromWorkerPool(
                 label: label,
@@ -437,7 +424,20 @@ public actor CLIWorkerPoolProgress {
             Task { try? await rustTUI.sendSnapshot(snap) }
             return
         }
-        CLIProgressFormatting.writeMultiline(lines, previousLineCount: &previousLineCount, useFixedScreen: usesFixedScreen)
+        // Safe fallback only: one \r line — never multiline cursor-up (segfaults under parallel load).
+        let line = CLIProgressFormatting.overallLine(
+            label: label,
+            completed: completed,
+            total: total,
+            width: overallWidth,
+            tick: animationTick,
+            theme: theme,
+            framed: false,
+            statusRail: latestStatus
+        )
+        fputs("\r\u{001B}[2K\(line)", stderr)
+        fflush(stderr)
+        previousLineCount = 1
     }
 
     private func spentSeconds(workerID: Int, slot: Slot, now: Date) -> TimeInterval {

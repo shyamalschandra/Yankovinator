@@ -11,35 +11,66 @@ public enum YankovinatorRustTUI {
         return true
     }
 
+    /// Resolve `yankovinator` argv0 / PATH so sibling `yankovinator-tui` is found when invoked as a bare name.
     public static func locateExecutable() -> String? {
         if let override = ProcessInfo.processInfo.environment["YANKOVINATOR_TUI_PATH"],
            !override.isEmpty,
            FileManager.default.isExecutableFile(atPath: override) {
             return override
         }
-        let argv0 = CommandLine.arguments[0]
-        let binDir = (argv0 as NSString).deletingLastPathComponent
-        let sibling = (binDir as NSString).appendingPathComponent("yankovinator-tui")
-        if FileManager.default.isExecutableFile(atPath: sibling) {
-            return sibling
+
+        var candidates: [String] = []
+        if let cli = resolvedCLIPath() {
+            let sibling = (cli as NSString).deletingLastPathComponent
+                .appending("/yankovinator-tui")
+            candidates.append(sibling)
         }
-        let cwdRelative = FileManager.default.currentDirectoryPath + "/.build/debug/yankovinator-tui"
-        if FileManager.default.isExecutableFile(atPath: cwdRelative) {
-            return cwdRelative
-        }
-        let releaseRelative = FileManager.default.currentDirectoryPath + "/.build/release/yankovinator-tui"
-        if FileManager.default.isExecutableFile(atPath: releaseRelative) {
-            return releaseRelative
-        }
-        let tuiCrate = FileManager.default.currentDirectoryPath + "/tui/target/debug/yankovinator-tui"
-        if FileManager.default.isExecutableFile(atPath: tuiCrate) {
-            return tuiCrate
-        }
-        let tuiRelease = FileManager.default.currentDirectoryPath + "/tui/target/release/yankovinator-tui"
-        if FileManager.default.isExecutableFile(atPath: tuiRelease) {
-            return tuiRelease
+        // Also search PATH for yankovinator-tui directly (Homebrew / local installs).
+        candidates.append(contentsOf: pathLookup(executable: "yankovinator-tui"))
+
+        let cwd = FileManager.default.currentDirectoryPath
+        candidates.append(contentsOf: [
+            cwd + "/.build/debug/yankovinator-tui",
+            cwd + "/.build/release/yankovinator-tui",
+            cwd + "/tui/target/debug/yankovinator-tui",
+            cwd + "/tui/target/release/yankovinator-tui",
+        ])
+
+        var seen = Set<String>()
+        for path in candidates {
+            let standardized = (path as NSString).standardizingPath
+            guard seen.insert(standardized).inserted else { continue }
+            if FileManager.default.isExecutableFile(atPath: standardized) {
+                return standardized
+            }
         }
         return nil
+    }
+
+    /// Absolute path to the running `yankovinator` binary when possible.
+    public static func resolvedCLIPath() -> String? {
+        let argv0 = CommandLine.arguments[0]
+        if argv0.hasPrefix("/") {
+            return (argv0 as NSString).standardizingPath
+        }
+        if argv0.contains("/") {
+            let cwd = FileManager.default.currentDirectoryPath
+            return ((cwd as NSString).appendingPathComponent(argv0) as NSString).standardizingPath
+        }
+        // Bare name from PATH (common when users type `yankovinator`).
+        return pathLookup(executable: argv0).first
+    }
+
+    static func pathLookup(executable name: String) -> [String] {
+        let pathEnv = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin"
+        var hits: [String] = []
+        for dir in pathEnv.split(separator: ":") {
+            let candidate = (String(dir) as NSString).appendingPathComponent(name)
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                hits.append((candidate as NSString).standardizingPath)
+            }
+        }
+        return hits
     }
 }
 

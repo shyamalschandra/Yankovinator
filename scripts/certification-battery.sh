@@ -90,6 +90,16 @@ else
   bad "rust tui opt-out env" ""
 fi
 
+echo "======== 4f) Rust TUI PATH discovery (regression for bare argv0) ========"
+# Ensure release yankovinator can resolve sibling/PATH yankovinator-tui without cwd install.
+if [[ -x "$TUI_BIN" ]]; then
+  export PATH="$(pwd)/tui/target/release:$PATH"
+  # Unit coverage lives in YankovinatorRustTUITests; here verify binary presence on PATH.
+  command -v yankovinator-tui >/dev/null && ok "yankovinator-tui on PATH" || bad "yankovinator-tui on PATH" ""
+else
+  bad "yankovinator-tui on PATH" "build missing"
+fi
+
 echo "======== 5) Validation errors ========"
 VAL_DIR=$(mktemp -d)
 mkdir -p "$VAL_DIR/s" "$VAL_DIR/t" "$VAL_DIR/o"

@@ -23,6 +23,15 @@ Release and main-branch verification runs:
 
 E2E sections require a local Ollama on `http://localhost:11434` with a usable model (default `llama3.2:3b`).
 
+## Known certification gap (fixed in v1.06.6)
+
+E2E historically used **`--no-progress`**, so the interactive multi-worker TUI was **not** load-tested. That left a segfault when:
+
+1. `yankovinator` was invoked as a **bare PATH name** (argv0 without directory), so sibling `yankovinator-tui` was not found.
+2. Swift fell back to **multiline cursor-up** redraws (+ optional MIDI) under 10 workers → terminal corruption / segfault.
+
+**v1.06.6** resolves PATH for the TUI sidecar and never uses multiline Swift redraw for worker pools (single-line or Rust TUI only).
+
 ## Environment
 
 - `DEVELOPER_DIR` — Xcode app path for XCTest (default: `/Applications/Xcode.app/Contents/Developer`)
