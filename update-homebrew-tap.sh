@@ -30,13 +30,15 @@ fi
 
 echo "SHA256: ${SHA256}"
 
+mkdir -p "${TAP_DIR}/Formula"
+cp "${SCRIPT_DIR}/Formula/yankovinator.rb" "${TAP_DIR}/Formula/yankovinator.rb"
 cp "${SCRIPT_DIR}/Formula/yankovinator.rb" "${TAP_DIR}/yankovinator.rb"
 
 # Keep tap formula URL/sha synced to the requested release.
 python3 - <<PY
 from pathlib import Path
 import re
-path = Path("${TAP_DIR}/yankovinator.rb")
+path = Path("${TAP_DIR}/Formula/yankovinator.rb")
 text = path.read_text()
 text = re.sub(
     r"https://github.com/shyamalschandra/Yankovinator/releases/download/v[0-9.]+/yankovinator-universal.tar.gz",
@@ -46,9 +48,10 @@ text = re.sub(
 )
 text = re.sub(r'sha256 "[^"]+"', f'sha256 "${SHA256}"', text, count=1)
 path.write_text(text)
+Path("${TAP_DIR}/yankovinator.rb").write_text(text)
 PY
 
-git -C "${TAP_DIR}" add yankovinator.rb
+git -C "${TAP_DIR}" add Formula/yankovinator.rb yankovinator.rb
 if git -C "${TAP_DIR}" diff --cached --quiet; then
   echo "Tap already up to date for ${TAG}"
   exit 0
