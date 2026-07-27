@@ -9,9 +9,9 @@ public class ParodyGenerator {
     private let ollamaClient: OllamaClient
     private let syllableCounter: SyllableCounter.Type
     private let dictionary: OEDDictionary?
-    private let lexicalSubstitution: LexicalSubstitutionEngine
-    private let rhymeClustering: UnsupervisedRhymeClustering
-    private let coherenceCritic: CoherenceCritic
+    private let lexicalSubstitution: LexicalSubstitutionEngine?
+    private let rhymeClustering: UnsupervisedRhymeClustering?
+    private let coherenceCritic: CoherenceCritic?
     private let useUnsupervisedNLP: Bool
     
     /// Initialize the parody generator
@@ -33,10 +33,20 @@ public class ParodyGenerator {
         let client = OllamaClient(baseURL: ollamaBaseURL, model: ollamaModel)
         self.ollamaClient = client
         self.syllableCounter = SyllableCounter.self
-        self.lexicalSubstitution = LexicalSubstitutionEngine()
-        self.rhymeClustering = UnsupervisedRhymeClustering()
-        self.coherenceCritic = CoherenceCritic(ollamaClient: skipLLMCoherenceCritic ? nil : client)
         self.useUnsupervisedNLP = useUnsupervisedNLP
+        // Avoid N× concurrent NLEmbedding loads from batch workers when unsupervised NLP is off.
+        if useUnsupervisedNLP {
+            self.lexicalSubstitution = LexicalSubstitutionEngine()
+            self.rhymeClustering = UnsupervisedRhymeClustering()
+            self.coherenceCritic = CoherenceCritic(
+                ollamaClient: skipLLMCoherenceCritic ? nil : client,
+                loadEmbeddings: true
+            )
+        } else {
+            self.lexicalSubstitution = nil
+            self.rhymeClustering = nil
+            self.coherenceCritic = nil
+        }
         
         // Initialize dictionary if requested (shared instance — avoids N× download/parse in batch workers).
         if useDictionary {
@@ -97,19 +107,19 @@ public class ParodyGenerator {
         // Detect rhyming scheme (unsupervised clustering when enabled)
         let rhymeGroups: [String]
         let rhymeScheme: String
-        if useUnsupervisedNLP {
+        if useUnsupervisedNLP, let rhymeClustering {
             let clustered = rhymeClustering.clusterRhymeScheme(from: nonEmptyTexts)
             rhymeGroups = clustered.rhymeGroups
             rhymeScheme = clustered.scheme
             if verbose {
-                print("Detected rhyme scheme: \(rhymeScheme) [\(clustered.method)]")
+                Self.verbosePrint("Detected rhyme scheme: \(rhymeScheme) [\(clustered.method)]")
             }
         } else {
             let detected = RhymeSchemeAnalyzer.detectRhymeScheme(from: nonEmptyTexts)
             rhymeGroups = detected.rhymeGroups
             rhymeScheme = detected.scheme
             if verbose {
-                print("Detected rhyme scheme: \(rhymeScheme)")
+                Self.verbosePrint("Detected rhyme scheme: \(rhymeScheme)")
             }
         }
         
@@ -182,13 +192,13 @@ public class ParodyGenerator {
             } catch let error as OllamaError {
                 // If generation fails, provide helpful error
                 if verbose {
-                    print("\nError generating line \(index + 1): \(error.description)")
+                    Self.verbosePrint("\nError generating line \(index + 1): \(error.description)")
                 }
                 throw error // Re-throw to be caught by outer handler
             } catch {
                 // Unexpected error
                 if verbose {
-                    print("\nUnexpected error generating line \(index + 1): \(error.localizedDescription)")
+                    Self.verbosePrint("\nUnexpected error generating line \(index + 1): \(error.localizedDescription)")
                 }
                 throw OllamaError.networkError(error)
             }
@@ -248,7 +258,7 @@ public class ParodyGenerator {
                     // If refinement fails, use the original generated line
                     // Log but don't fail the entire generation
                     if verbose {
-                        print("Warning: Refinement pass \(pass) failed for line \(index + 1), using original line")
+                        Self.verbosePrint("Warning: Refinement pass \(pass) failed for line \(index + 1), using original line")
                     }
                     // Continue with the line we have, don't break
                 }
@@ -272,20 +282,20 @@ public class ParodyGenerator {
                     )
                 } catch {
                     if verbose {
-                        print("Warning: Semantic coherence refinement failed for line \(index + 1), using current line")
+                        Self.verbosePrint("Warning: Semantic coherence refinement failed for line \(index + 1), using current line")
                     }
                 }
             }
 
             // Unsupervised coherence critic: regenerate once if next-line surprise is too high
-            if enableCoherenceRegeneration && useUnsupervisedNLP && !contextLines.isEmpty {
+            if enableCoherenceRegeneration && useUnsupervisedNLP, let coherenceCritic, !contextLines.isEmpty {
                 let criticScore = await coherenceCritic.score(
                     candidate: parodyLine,
                     previousLines: contextLines,
                     keywords: keywords
                 )
                 if verbose {
-                    print(
+                    Self.verbosePrint(
                         "Coherence critic line \(index + 1): " +
                         "coherence=\(String(format: "%.2f", criticScore.coherence)) " +
                         "surprise=\(String(format: "%.2f", criticScore.surprise)) " +
@@ -295,7 +305,7 @@ public class ParodyGenerator {
                 if coherenceCritic.shouldReject(criticScore) {
                     do {
                         if verbose {
-                            print("Regenerating line \(index + 1) after coherence reject")
+                            Self.verbosePrint("Regenerating line \(index + 1) after coherence reject")
                         }
                         let retry = try await ollamaClient.generateParodyLine(
                             originalLine: originalLine,
@@ -321,7 +331,7 @@ public class ParodyGenerator {
                         }
                     } catch {
                         if verbose {
-                            print("Warning: coherence retry failed for line \(index + 1)")
+                            Self.verbosePrint("Warning: coherence retry failed for line \(index + 1)")
                         }
                     }
                 }
@@ -430,7 +440,7 @@ public class ParodyGenerator {
             }
         }
 
-        guard useUnsupervisedNLP else {
+        guard useUnsupervisedNLP, let lexicalSubstitution else {
             return dictionarySuggestions
         }
 
@@ -976,7 +986,7 @@ public class ParodyGenerator {
                 }
             } catch {
                 if verbose {
-                    print("Fit attempt \(attempt) failed: \(error)")
+                    Self.verbosePrint("Fit attempt \(attempt) failed: \(error)")
                 }
                 continue
             }
@@ -987,7 +997,7 @@ public class ParodyGenerator {
                 bestMetrics = metrics
             }
             if verbose {
-                print(
+                Self.verbosePrint(
                     "Fit line attempt \(attempt): composite=\(String(format: "%.3f", metrics.composite)) " +
                     "syll=\(String(format: "%.2f", metrics.wordSyllablePattern)) " +
                     "pos=\(String(format: "%.2f", metrics.partOfSpeech))"
@@ -1085,7 +1095,7 @@ public class ParodyGenerator {
                 parodyLines[lineIndex] = polished
                 nonEmptyParodyLines[nonEmptyIndex] = polished
                 if verbose {
-                    print(
+                    Self.verbosePrint(
                         "Polished line \(lineIndex + 1): \(String(format: "%.3f", before.composite)) → " +
                         "\(String(format: "%.3f", after.composite))"
                     )
@@ -1100,7 +1110,7 @@ public class ParodyGenerator {
             dictionary: dictionary
         )
         if verbose {
-            print(
+            Self.verbosePrint(
                 "Song fit: global=\(String(format: "%.3f", finalSummary.globalScore)) " +
                 "min=\(String(format: "%.3f", finalSummary.minComposite)) " +
                 "allFit=\(finalSummary.allFit)"
@@ -1144,6 +1154,13 @@ public class ParodyGenerator {
     /// - Throws: OllamaError if model is not available
     public func verifyModel() async throws {
         try await ollamaClient.verifyModel()
+    }
+
+    /// Serialize stdout logging from parallel workers (avoids interleaved / corrupted verbose spam).
+    private static func verbosePrint(_ message: String) {
+        NLConcurrency.synchronized {
+            print(message)
+        }
     }
 }
 

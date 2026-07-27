@@ -44,15 +44,32 @@ final class YankovinatorTests: XCTestCase {
             "Twinkle twinkle little star",
             "How I wonder what you are",
         ]
+        let keywords = ["space": "beyond earth"]
+        _ = SharedNLEmbeddings.sentenceOrWordEmbedding()
         await withTaskGroup(of: Void.self) { group in
-            for _ in 0..<24 {
+            for _ in 0..<32 {
                 group.addTask {
                     _ = RhymeSchemeAnalyzer.detectRhymeScheme(from: lyrics)
                     _ = PartOfSpeechAnalyzer.analyzeLine(lyrics[0])
                     _ = SyllableCounter.countSyllablesInLine(lyrics[1])
+                    _ = ParodyFitScorer.scoreLine(
+                        original: lyrics[0],
+                        parody: "Sparkle sparkle tiny sun",
+                        previousParodyLines: [],
+                        keywords: keywords
+                    )
+                    _ = LexicalSubstitutionEngine().substitutes(for: "star", requiredSyllables: 1, maxResults: 3)
                 }
             }
         }
+    }
+
+    func testRhymeLabelsDoNotOverflowPastZ() {
+        let many = (0..<40).map { "uniqueEndWord\($0)xyz" }
+        let detected = RhymeSchemeAnalyzer.detectRhymeScheme(from: many)
+        XCTAssertFalse(detected.scheme.contains("["))
+        XCTAssertFalse(detected.scheme.contains("\\"))
+        XCTAssertFalse(detected.scheme.contains("`"))
     }
 
     func testParodyGeneration() async throws {

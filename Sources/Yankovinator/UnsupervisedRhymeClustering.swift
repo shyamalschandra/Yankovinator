@@ -23,10 +23,16 @@ public struct UnsupervisedRhymeClustering {
 
     private let embedding: NLEmbedding?
     private let distanceThreshold: Double
+    private let usesSharedEmbedding: Bool
 
     public init(distanceThreshold: Double = 0.42) {
-        self.embedding = NLEmbedding.wordEmbedding(for: .english)
+        self.embedding = nil
+        self.usesSharedEmbedding = true
         self.distanceThreshold = distanceThreshold
+    }
+
+    private var activeEmbedding: NLEmbedding? {
+        usesSharedEmbedding ? SharedNLEmbeddings.wordEmbedding() : embedding
     }
 
     /// Cluster rhyme scheme for non-empty lyric lines.
@@ -68,7 +74,7 @@ public struct UnsupervisedRhymeClustering {
             rhymeGroups: letters,
             scheme: letters.joined(),
             lastWords: lastWords,
-            method: embedding == nil ? "phonetic" : "phonetic+embedding"
+            method: activeEmbedding == nil ? "phonetic" : "phonetic+embedding"
         )
     }
 
@@ -118,7 +124,7 @@ public struct UnsupervisedRhymeClustering {
         weight += 0.25
 
         // Embedding neighborhood (unsupervised semantic/phonetic proxy)
-        if let embedding, embedding.contains(a), embedding.contains(b) {
+        if let embedding = activeEmbedding, embedding.contains(a), embedding.contains(b) {
             let d = embedding.distance(between: a, and: b)
             // NLEmbedding distances are typically small for related words; clamp.
             let embScore = min(max(d / 1.5, 0.0), 1.0)

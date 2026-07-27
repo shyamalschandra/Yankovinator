@@ -301,6 +301,7 @@ jobs:
             Local AI parody generator using NaturalLanguage + Ollama (`llama3.2:3b`).
 
             ### What's new
+            - **v1.06.7:** Fix `--fit-optimize` parallel NL segfault (shared embeddings, safe fit scoring, recursive NL lock)
             - **v1.06.6:** PATH-resolve `yankovinator-tui`; never Swift multiline worker TUI (segfault fix); MIDI only with Rust TUI
             - **v1.06.5:** Segfault fix (no alt-screen worker TUI + MIDI prewarm); CLI `--version`; `install-local.sh`; resume + Rust TUI
             - **v1.06.4:** Batch resume checkpoint (`.yankovinator/`, `--fresh-batch`); Rust `yankovinator-tui` (ratatui) for UTF-8 worker dashboard

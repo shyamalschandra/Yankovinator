@@ -23,7 +23,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
           # If songs×themes×candidates > 100, add --force
           # Stop/restart: progress is checkpointed under --output-dir/.yankovinator (use --fresh-batch to reset)
         """,
-        version: "1.06.6"
+        version: "1.06.7"
     )
 
     @Option(name: [.long, .customShort("u")], help: "Ollama API base URL (local or cloud)")
@@ -386,6 +386,8 @@ struct YankovinatorCLI: AsyncParsableCommand {
         }
         // Touch shared dictionary once (background load) instead of per worker.
         OEDDictionary.shared.waitUntilLoaded(timeoutSeconds: 5)
+        // One-time embedding warm-up under the NL lock (avoids N workers racing NLEmbedding loads).
+        _ = SharedNLEmbeddings.sentenceOrWordEmbedding()
 
         let rx = CloudBatchPrescription.plan(
             model: model,

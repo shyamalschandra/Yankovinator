@@ -24,8 +24,8 @@ public struct CoherenceCritic {
         }
     }
 
-    private let embedding: NLEmbedding?
     private let ollamaClient: OllamaClient?
+    private let loadEmbeddings: Bool
     /// Preferred coherence band: not too predictable, not random.
     public var minCoherence: Double
     public var maxSurprise: Double
@@ -33,16 +33,11 @@ public struct CoherenceCritic {
     public init(
         ollamaClient: OllamaClient? = nil,
         minCoherence: Double = 0.35,
-        maxSurprise: Double = 0.85
+        maxSurprise: Double = 0.85,
+        loadEmbeddings: Bool = true
     ) {
-        // Prefer sentence embeddings when available; fall back to word embeddings.
-        if #available(macOS 13.0, iOS 16.0, *) {
-            self.embedding = NLEmbedding.sentenceEmbedding(for: .english)
-                ?? NLEmbedding.wordEmbedding(for: .english)
-        } else {
-            self.embedding = NLEmbedding.wordEmbedding(for: .english)
-        }
         self.ollamaClient = ollamaClient
+        self.loadEmbeddings = loadEmbeddings
         self.minCoherence = minCoherence
         self.maxSurprise = maxSurprise
     }
@@ -58,37 +53,47 @@ public struct CoherenceCritic {
             return Score(coherence: 0.7, surprise: 0.4, method: "local-bootstrap", notes: "no prior context")
         }
 
-        guard let embedding else {
+        guard loadEmbeddings else {
             let overlap = lexicalOverlap(candidate, context: context, keywords: keywords)
             return Score(
                 coherence: overlap,
                 surprise: 1.0 - overlap,
                 method: "lexical-overlap",
-                notes: "embedding unavailable"
+                notes: "embeddings disabled"
             )
         }
 
-        let contextText = context.suffix(6).joined(separator: " ")
-        let distance: Double
-        if embedding.contains(contextText), embedding.contains(candidate) {
-            distance = embedding.distance(between: contextText, and: candidate)
-        } else {
-            // Fall back to averaged word distances
-            distance = averageWordDistance(candidate, context: contextText, embedding: embedding)
+        return NLConcurrency.synchronized {
+            guard let embedding = SharedNLEmbeddings.sentenceOrWordEmbedding() else {
+                let overlap = lexicalOverlap(candidate, context: context, keywords: keywords)
+                return Score(
+                    coherence: overlap,
+                    surprise: 1.0 - overlap,
+                    method: "lexical-overlap",
+                    notes: "embedding unavailable"
+                )
+            }
+
+            let contextText = context.suffix(6).joined(separator: " ")
+            let distance: Double
+            if embedding.contains(contextText), embedding.contains(candidate) {
+                distance = embedding.distance(between: contextText, and: candidate)
+            } else {
+                distance = averageWordDistance(candidate, context: contextText, embedding: embedding)
+            }
+
+            let normalized = min(max(distance / 1.8, 0.0), 1.0)
+            let coherence = 1.0 - normalized
+            let themeBoost = themeOverlapBoost(candidate, keywords: keywords)
+            let adjusted = min(max(coherence + themeBoost, 0.0), 1.0)
+
+            return Score(
+                coherence: adjusted,
+                surprise: 1.0 - adjusted,
+                method: "embedding-distance",
+                notes: "distance=\(String(format: "%.3f", distance))"
+            )
         }
-
-        // Map distance to coherence/surprise. Typical NL distances are small for related text.
-        let normalized = min(max(distance / 1.8, 0.0), 1.0)
-        let coherence = 1.0 - normalized
-        let themeBoost = themeOverlapBoost(candidate, keywords: keywords)
-        let adjusted = min(max(coherence + themeBoost, 0.0), 1.0)
-
-        return Score(
-            coherence: adjusted,
-            surprise: 1.0 - adjusted,
-            method: "embedding-distance",
-            notes: "distance=\(String(format: "%.3f", distance))"
-        )
     }
 
     /// Full critic: local score, optionally refined by Ollama surprise probe.
@@ -169,6 +174,7 @@ public struct CoherenceCritic {
     }
 
     private func tokenize(_ text: String) -> Set<String> {
+        // Caller must already hold NLConcurrency when used from scoreLocally.
         let tokenizer = NLTokenizer(unit: .word)
         tokenizer.string = text
         var words: Set<String> = []

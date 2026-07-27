@@ -1,10 +1,11 @@
 // Copyright (C) 2025, Shyamal Suhana Chandra
-// NaturalLanguage tokenizers/taggers are not safe across concurrent Swift tasks on all OS builds.
+// NaturalLanguage tokenizers/taggers/embeddings are not safe across concurrent Swift tasks.
 
 import Foundation
 
 enum NLConcurrency {
-    private static let lock = NSLock()
+    /// Recursive so fit-scoring / POS / embedding helpers can nest safely on one worker.
+    private static let lock = NSRecursiveLock()
 
     static func synchronized<T>(_ body: () -> T) -> T {
         lock.lock()

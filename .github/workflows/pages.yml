@@ -89,7 +89,7 @@ jobs:
             fi
           done
 
-          for note in RELEASE_NOTES_v1.06.6.md RELEASE_NOTES_v1.06.5.md RELEASE_NOTES_v1.06.4.md; do
+          for note in RELEASE_NOTES_v1.06.7.md RELEASE_NOTES_v1.06.6.md RELEASE_NOTES_v1.06.5.md; do
             if [ -f "$note" ]; then
               cp "$note" _site/
             fi

@@ -71,8 +71,8 @@ public enum ParodyFitScorer {
         let parodyLineSyllables = SyllableCounter.countSyllablesInLine(pTrim)
         let lineTotal = syllableCloseness(target: targetLineSyllables, actual: parodyLineSyllables)
 
-        let origWords = SyllableCounter.analyzeWordSyllablesUnsafe(in: oTrim)
-        let paraWords = SyllableCounter.analyzeWordSyllablesUnsafe(in: pTrim)
+        let origWords = SyllableCounter.analyzeWordSyllables(in: oTrim)
+        let paraWords = SyllableCounter.analyzeWordSyllables(in: pTrim)
         let wordPattern = wordSyllablePatternScore(original: origWords.map(\.syllables), parody: paraWords.map(\.syllables))
         let wordCount = wordCountScore(originalCount: origWords.count, parodyCount: paraWords.count)
 
@@ -190,7 +190,7 @@ public enum ParodyFitScorer {
 
     private static func dictionaryUsageScore(line: String, dictionary: OEDDictionary?) -> Double {
         guard let dictionary, dictionary.isLoaded() else { return 0.5 }
-        let words = SyllableCounter.analyzeWordSyllablesUnsafe(in: line)
+        let words = SyllableCounter.analyzeWordSyllables(in: line)
         let content = words.map(\.word).filter { w in
             let letters = w.filter(\.isLetter)
             return letters.count > 2

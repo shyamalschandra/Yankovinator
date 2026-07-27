@@ -45,10 +45,10 @@ public struct RhymeSchemeAnalyzer {
                 rhymeGroups.append(group)
                 wordToGroup[word] = group
             } else {
-                // New rhyme group
+                // New rhyme group — stay in A…Z then A1, B1, … (never walk past 'Z' into punctuation).
                 rhymeGroups.append(nextGroupLetter)
                 wordToGroup[word] = nextGroupLetter
-                nextGroupLetter = String(UnicodeScalar(nextGroupLetter.unicodeScalars.first!.value + 1)!)
+                nextGroupLetter = Self.nextRhymeLabel(after: nextGroupLetter)
             }
         }
         
@@ -56,6 +56,26 @@ public struct RhymeSchemeAnalyzer {
         let scheme = rhymeGroups.joined()
         
         return (rhymeGroups, scheme)
+    }
+
+    private static func nextRhymeLabel(after label: String) -> String {
+        if label.count == 1, let scalar = label.unicodeScalars.first {
+            let value = scalar.value
+            if value >= 65 && value < 90 { // A..<Z
+                return String(UnicodeScalar(value + 1)!)
+            }
+            return "A1"
+        }
+        // Forms like A1, B2, …
+        let letter = label.first.map(String.init) ?? "A"
+        let cycle = Int(label.dropFirst()) ?? 1
+        if letter == "Z" {
+            return "A\(cycle + 1)"
+        }
+        if let scalar = letter.unicodeScalars.first {
+            return String(UnicodeScalar(scalar.value + 1)!) + String(cycle)
+        }
+        return "A\(cycle + 1)"
     }
     
     /// Extract the last word from a line

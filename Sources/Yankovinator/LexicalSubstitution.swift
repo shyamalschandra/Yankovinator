@@ -23,7 +23,6 @@ public struct LexicalSubstitutionEngine {
         }
     }
 
-    private let embedding: NLEmbedding?
     private let syllableCounter: SyllableCounter.Type
     private let maxDistance: Double
 
@@ -31,14 +30,13 @@ public struct LexicalSubstitutionEngine {
         maxDistance: Double = 1.15,
         syllableCounter: SyllableCounter.Type = SyllableCounter.self
     ) {
-        self.embedding = NLEmbedding.wordEmbedding(for: .english)
         self.syllableCounter = syllableCounter
         self.maxDistance = maxDistance
     }
 
     /// Whether embedding-backed substitution is available on this system.
     public var isAvailable: Bool {
-        embedding != nil
+        SharedNLEmbeddings.wordEmbedding() != nil
     }
 
     /// Suggest syllable-matched substitutes for a single word.
@@ -56,45 +54,47 @@ public struct LexicalSubstitutionEngine {
         let targetSyllables = requiredSyllables ?? syllableCounter.countSyllables(in: cleaned)
         guard targetSyllables > 0 else { return [] }
 
+        // Snapshot neighbors under the NL lock — do not call syllable/POS APIs while holding it.
+        let neighborNames: [(String, Double)] = SharedNLEmbeddings.withWordEmbedding { embedding in
+            guard embedding.contains(cleaned) else { return [] }
+            return embedding.neighbors(for: cleaned, maximumCount: max(40, maxResults * 6))
+        } ?? []
+
         var ranked: [Substitution] = []
         var seen = excludeWords.union([cleaned])
 
-        if let embedding, embedding.contains(cleaned) {
-            // neighbors(for:) can crash for OOV tokens; only query in-vocabulary words.
-            let neighborNames = embedding.neighbors(for: cleaned, maximumCount: max(40, maxResults * 6))
-            for (neighbor, distance) in neighborNames {
-                let candidate = normalize(neighbor)
-                guard !candidate.isEmpty, !seen.contains(candidate) else { continue }
-                guard embedding.contains(candidate) else { continue }
-                guard distance <= maxDistance else { continue }
+        for (neighbor, distance) in neighborNames {
+            let candidate = normalize(neighbor)
+            guard !candidate.isEmpty, !seen.contains(candidate) else { continue }
+            guard distance <= maxDistance else { continue }
 
-                let syllables = syllableCounter.countSyllables(in: candidate)
-                guard syllables == targetSyllables else { continue }
+            let inVocab = SharedNLEmbeddings.withWordEmbedding { $0.contains(candidate) } ?? false
+            guard inVocab else { continue }
 
-                if let requiredPartOfSpeech {
-                    let candidatePOS = PartOfSpeechAnalyzer.tagWord(candidate)
-                    guard PartOfSpeechTag.compatible(required: requiredPartOfSpeech, candidate: candidatePOS) else {
-                        continue
-                    }
+            let syllables = syllableCounter.countSyllables(in: candidate)
+            guard syllables == targetSyllables else { continue }
+
+            if let requiredPartOfSpeech {
+                let candidatePOS = PartOfSpeechAnalyzer.tagWord(candidate)
+                guard PartOfSpeechTag.compatible(required: requiredPartOfSpeech, candidate: candidatePOS) else {
+                    continue
                 }
-
-                seen.insert(candidate)
-                ranked.append(
-                    Substitution(
-                        original: cleaned,
-                        candidate: candidate,
-                        syllables: syllables,
-                        distance: distance
-                    )
-                )
             }
+
+            seen.insert(candidate)
+            ranked.append(
+                Substitution(
+                    original: cleaned,
+                    candidate: candidate,
+                    syllables: syllables,
+                    distance: distance
+                )
+            )
         }
 
-        // Theme-biased re-rank: prefer neighbors near theme keywords in embedding space.
-        if !theme.isEmpty, let embedding {
+        if !theme.isEmpty {
             ranked.sort { lhs, rhs in
-                themeAffinity(lhs.candidate, theme: theme, embedding: embedding) >
-                themeAffinity(rhs.candidate, theme: theme, embedding: embedding)
+                themeAffinity(lhs.candidate, theme: theme) > themeAffinity(rhs.candidate, theme: theme)
             }
         } else {
             ranked.sort { $0.distance < $1.distance }
@@ -149,20 +149,17 @@ public struct LexicalSubstitutionEngine {
         word.lowercased().filter { $0.isLetter }
     }
 
-    private func themeAffinity(
-        _ word: String,
-        theme: [String],
-        embedding: NLEmbedding
-    ) -> Double {
-        var best = -Double.infinity
-        for themeWord in theme {
-            let cleaned = normalize(themeWord)
-            guard !cleaned.isEmpty else { continue }
-            guard embedding.contains(word), embedding.contains(cleaned) else { continue }
-            let distance = embedding.distance(between: word, and: cleaned)
-            // Smaller distance => higher affinity
-            best = max(best, -distance)
-        }
-        return best
+    private func themeAffinity(_ word: String, theme: [String]) -> Double {
+        SharedNLEmbeddings.withWordEmbedding { embedding in
+            var best = -Double.infinity
+            for themeWord in theme {
+                let cleaned = normalize(themeWord)
+                guard !cleaned.isEmpty else { continue }
+                guard embedding.contains(word), embedding.contains(cleaned) else { continue }
+                let distance = embedding.distance(between: word, and: cleaned)
+                best = max(best, -distance)
+            }
+            return best
+        } ?? -Double.infinity
     }
 }

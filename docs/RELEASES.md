@@ -2,7 +2,7 @@
 
 Yankovinator publishes pre-built macOS binaries so you can install without a Swift toolchain.
 
-**Current release:** [v1.06.6](https://github.com/shyamalschandra/Yankovinator/releases/tag/v1.06.6)
+**Current release:** [v1.06.7](https://github.com/shyamalschandra/Yankovinator/releases/tag/v1.06.7)
 
 ## What each archive contains
 
@@ -24,7 +24,7 @@ Yankovinator publishes pre-built macOS binaries so you can install without a Swi
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.6/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.7/yankovinator-universal.tar.gz
 
 # Verify checksum (compare to the release .sha256 asset)
 shasum -a 256 yankovinator-universal.tar.gz
