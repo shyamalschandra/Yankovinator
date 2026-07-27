@@ -28,7 +28,7 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 - Word-by-word **part-of-speech** matching and **OED**-filtered substitutions (v1.04.9+)
 - **ParodyFitScorer** global ranking; optional **`--fit-optimize`** batch hill-climbing
 - Parallel workers for batch jobs (`--workers` up to **128** / `--jobs`) with a **producer–consumer queue** (up to **128** concurrent consumers; optional **`--consumers`** cap)
-- Batch **TUI progress** on stderr (**alternate screen**, full Unicode/color/emoji); one row per worker (`--no-progress` for plain logs)
+- Batch **TUI progress** on stderr: **Rust `yankovinator-tui`** (ratatui/crossterm, UTF-8 emoji/color) when installed beside `yankovinator`; Swift ANSI fallback otherwise (`--no-progress` for plain logs; `YANKOVINATOR_RUST_TUI=0` to force fallback)
 - Batch-only **`yankovinator` CLI**: required `--input-dir`, `--themes-dir`, `--output-dir` (no single-file lyrics arg or `--keywords`)
 - Combinatorial batch: every song × every theme via `--input-dir` + `--themes-dir`
 - Multi-candidate ranking: `--candidates` up to **64** generates and scores variants per song×theme
@@ -49,14 +49,14 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.3**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.4**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.3/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.4/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
-sudo mv yankovinator keyword-generator /usr/local/bin/
+sudo mv yankovinator yankovinator-tui keyword-generator /usr/local/bin/
 # Optional if present in the archive:
 # sudo mv benchmark /usr/local/bin/
 
@@ -153,6 +153,7 @@ swift run yankovinator --input-dir <songs-dir> --themes-dir <themes-dir> --outpu
 - `--fit-optimize`: Extra Ollama passes to hill-climb syllable/POS/coherence fit in batch (slower, higher scores)
 - `--keep-candidates`: Also write ranked variants under `<song>.candidates/`
 - `--force`: Allow songs×themes×candidates totals larger than 100 generations
+- `--fresh-batch`: Ignore/delete checkpoint in `--output-dir/.yankovinator` and regenerate everything
 - `--ollama-timeout <sec>`: Per-request Ollama HTTP timeout (30–900; heavy `:cloud` models default to 600s)
 - `--no-progress`: Disable stderr progress bar for batch / multi-candidate runs
 - `--midi-progress`: Lightweight MIDI cues per worker bar (macOS, interactive terminal only)
@@ -180,6 +181,10 @@ swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./
 # All ranked: out/<theme>/<song>.candidates/
 # If songs×themes×candidates > 100, add --force
 ```
+
+**Stop and resume:** Each finished song×theme×candidate is appended to `out/.yankovinator/` (JSONL log + candidate files). Re-run the same command after Ctrl+C to skip completed work. Use `--fresh-batch` to wipe the checkpoint and start over. If you change songs, themes, `--candidates`, or `--model`, the fingerprint will not match—use `--fresh-batch` or a new `--output-dir`.
+
+**Batch TUI (fix garbled Unicode / segfaults):** Release tarballs include **`yankovinator-tui`** (Rust + ratatui). Install it **next to** `yankovinator` (same directory). The CLI auto-spawns it for multi-worker runs. From source: `cd tui && cargo build --release` (binary at `tui/target/release/yankovinator-tui`). Override path with `YANKOVINATOR_TUI_PATH`; disable with `YANKOVINATOR_RUST_TUI=0`. Use `--no-progress` for plain logs only.
 
 **Cloud Ollama (10 workers):**
 
@@ -266,6 +271,7 @@ themes/          # --themes-dir: one .txt file per theme
   space.txt
   science.txt
 out/             # --output-dir
+  .yankovinator/   # resume checkpoint (manifest.json + completed.jsonl + candidates/)
   space/
     twinkle.parody.txt
   science/
@@ -329,7 +335,9 @@ npm run build   # GitHub Pages TypeScript
 | Resource | Description |
 |---|---|
 | [QUICK_START.md](QUICK_START.md) | Fast path from clone to first parody |
-| [RELEASE_NOTES_v1.06.3.md](RELEASE_NOTES_v1.06.3.md) | Latest release notes (ANSI alt-screen TUI fix) |
+| [RELEASE_NOTES_v1.06.4.md](RELEASE_NOTES_v1.06.4.md) | Latest release (resume checkpoint + Rust TUI) |
+| [docs/CERTIFICATION.md](docs/CERTIFICATION.md) | Certification battery (unit, E2E, blackbox) |
+| [RELEASE_NOTES_v1.06.3.md](RELEASE_NOTES_v1.06.3.md) | Prior release (ANSI alt-screen TUI fix) |
 | [RELEASE_NOTES_v1.06.2.md](RELEASE_NOTES_v1.06.2.md) | Superseded ncurses experiment |
 | [RELEASE_NOTES_v1.06.1.md](RELEASE_NOTES_v1.06.1.md) | Parallel batch crash fix |
 | [RELEASE_NOTES_v1.06.0.md](RELEASE_NOTES_v1.06.0.md) | Batch-only CLI |

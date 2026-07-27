@@ -40,6 +40,55 @@ echo "$H" | rg -q "ollama-num-parallel|OLLAMA_NUM_PARALLEL" && ok "help: ollama-
 echo "$H" | rg -q "ollama-num-workers" && ok "help: ollama-num-workers alias" || bad "help: ollama-num-workers alias" ""
 echo "$H" | rg -q "ollama-timeout" && ok "help: ollama-timeout" || bad "help: ollama-timeout" ""
 echo "$H" | rg -q "candidates" && ok "help: candidates" || bad "help: candidates" ""
+echo "$H" | rg -q "fresh-batch" && ok "help: fresh-batch" || bad "help: fresh-batch" ""
+echo "$H" | rg -q "fit-optimize" && ok "help: fit-optimize" || bad "help: fit-optimize" ""
+echo "$H" | rg -q "yankovinator" && ok "help: batch discussion" || bad "help: batch discussion" ""
+
+echo "======== 4b) Rust TUI build ========"
+TUI_BIN="tui/target/release/yankovinator-tui"
+if command -v cargo >/dev/null 2>&1; then
+  if (cd tui && cargo build --release) 2>&1 | tail -3; then
+    [[ -x "$TUI_BIN" ]] && ok "cargo build yankovinator-tui" || bad "cargo build yankovinator-tui" "missing binary"
+  else
+    bad "cargo build yankovinator-tui" ""
+  fi
+else
+  bad "cargo missing" "install Rust for TUI cert (optional on CI)"
+fi
+
+echo "======== 4c) Rust TUI blackbox (stdin protocol) ========"
+if [[ -x "$TUI_BIN" ]]; then
+  SNAP='{"t":"init","total":2,"workers":2,"label":"Cert"}'
+  SNAP2='{"t":"snapshot","completed":1,"tick":3,"batch_spent_secs":1.5,"batch_eta_secs":2.0,"status":"cert","messages":["hello"],"workers":[{"idle":false,"job_number":1,"line":2,"line_total":10,"spent_secs":1.0,"eta_secs":1.0,"slot_tick":1},{"idle":true,"job_number":0,"line":null,"line_total":null,"spent_secs":0.5,"eta_secs":null,"slot_tick":0}]}'
+  TUI_RUN=( "$TUI_BIN" )
+  if [[ ! -t 0 ]]; then
+    if command -v script >/dev/null 2>&1; then
+      TUI_RUN=( script -q /dev/null "$TUI_BIN" )
+    fi
+  fi
+  if printf '%s\n' "$SNAP" "$SNAP2" '{"t":"quit"}' | "${TUI_RUN[@]}" >/dev/null 2>&1; then
+    ok "rust tui blackbox"
+  else
+    bad "rust tui blackbox" ""
+  fi
+else
+  bad "rust tui blackbox" "binary missing"
+fi
+
+echo "======== 4d) Regression: BatchResumeStore (unit) ========"
+if swift test --filter BatchResumeStoreTests 2>&1 | tee /tmp/yank-cert-resume.log | tail -5; then
+  rg -q "0 failures" /tmp/yank-cert-resume.log && ok "BatchResumeStoreTests" || bad "BatchResumeStoreTests" ""
+else
+  bad "BatchResumeStoreTests" ""
+fi
+
+echo "======== 4e) UX A/B: Swift vs Rust TUI env ========"
+[[ "${YANKOVINATOR_RUST_TUI:-1}" != "0" ]] && ok "rust tui default enabled" || bad "rust tui env" ""
+if YANKOVINATOR_RUST_TUI=0 bash -c '[[ "$YANKOVINATOR_RUST_TUI" == "0" ]]'; then
+  ok "rust tui opt-out env"
+else
+  bad "rust tui opt-out env" ""
+fi
 
 echo "======== 5) Validation errors ========"
 VAL_DIR=$(mktemp -d)
@@ -122,6 +171,25 @@ if [[ "$OLLAMA_UP" == "1" ]]; then
   else
     bad "benchmark E2E" "$(tail -5 /tmp/yank-bm.log)"
   fi
+
+  echo "======== 14) E2E resume checkpoint (fresh-batch + .yankovinator) ========"
+  RES=$(mktemp -d)
+  mkdir -p "$RES/songs" "$RES/themes" "$RES/out"
+  cp data/example_lyrics.txt "$RES/songs/r.txt"
+  cp data/example_keywords.txt "$RES/themes/t.txt"
+  if $Y --input-dir "$RES/songs" --themes-dir "$RES/themes" --output-dir "$RES/out" --candidates 2 --no-progress 2>&1 | tail -3; then
+    [[ -d "$RES/out/.yankovinator" ]] && ok "resume checkpoint dir" || bad "resume checkpoint dir" ""
+    [[ -f "$RES/out/.yankovinator/manifest.json" ]] && ok "resume manifest" || bad "resume manifest" ""
+    echo stale > "$RES/out/.yankovinator/stale.marker"
+  else
+    bad "resume E2E run" ""
+  fi
+  if $Y --input-dir "$RES/songs" --themes-dir "$RES/themes" --output-dir "$RES/out" --candidates 2 --fresh-batch --no-progress 2>&1 | tail -3; then
+    [[ ! -f "$RES/out/.yankovinator/stale.marker" ]] && ok "fresh-batch clears checkpoint" || bad "fresh-batch" ""
+  else
+    bad "fresh-batch E2E" ""
+  fi
+  rm -rf "$RES"
 
   rm -rf "$TMP"
 fi

@@ -14,6 +14,14 @@ public enum TerminalProgress {
         isatty(STDERR_FILENO) != 0
     }
 
+    /// Skip alternate-screen drawing when the locale is not UTF-8 (avoids mojibake on some terminals).
+    public static var supportsUnicodeTUI: Bool {
+        let lang = (ProcessInfo.processInfo.environment["LC_ALL"]
+            ?? ProcessInfo.processInfo.environment["LANG"]
+            ?? "en_US.UTF-8").lowercased()
+        return lang.contains("utf")
+    }
+
     /// Rich TUI when stderr is a TTY; plain text otherwise (logs, CI).
     public static var tuiTheme: TUITheme {
         isInteractive ? .live : .plain
@@ -202,6 +210,8 @@ public actor CLIWorkerPoolProgress {
     private var animationTask: Task<Void, Never>?
     private let midi: CLIProgressMIDISoundboard?
     private let usesFixedScreen: Bool
+    private let rustTUI: RustTUIProcess?
+    private let usesRustTUI: Bool
 
     public init(
         total: Int,
@@ -222,7 +232,22 @@ public actor CLIWorkerPoolProgress {
         self.workerBusySeconds = Array(repeating: 0, count: self.workerCount)
         self.batchStartedAt = Date()
         self.midi = enableMIDI && TerminalProgress.isInteractive ? CLIProgressMIDISoundboard.shared : nil
-        self.usesFixedScreen = TerminalProgress.isInteractive && FixedScreenProgress.acquire()
+
+        var rust: RustTUIProcess?
+        if TerminalProgress.isInteractive,
+           YankovinatorRustTUI.isEnabled,
+           let path = YankovinatorRustTUI.locateExecutable() {
+            rust = RustTUIProcess(executablePath: path)
+        }
+        self.rustTUI = rust
+        self.usesRustTUI = rust != nil
+        self.usesFixedScreen = TerminalProgress.isInteractive
+            && TerminalProgress.supportsUnicodeTUI
+            && !(rust != nil)
+            && FixedScreenProgress.acquire()
+        if usesRustTUI {
+            StderrGate.setRustTUIActive(true)
+        }
 
         if TerminalProgress.isInteractive {
             animationTask = Task { [weak self] in
@@ -233,6 +258,14 @@ public actor CLIWorkerPoolProgress {
             }
         }
         Task { await refresh.setRedrawHandler { [weak self] in await self?.renderNow() } }
+        if usesRustTUI, let rust {
+            let totalJobs = self.total
+            let workers = self.workerCount
+            let batchLabel = label
+            Task {
+                try? await rust.initialize(total: totalJobs, workers: workers, label: batchLabel)
+            }
+        }
     }
 
     /// Append a status line (retained in memory; shown on the right rail + feed line).
@@ -314,11 +347,19 @@ public actor CLIWorkerPoolProgress {
         if usesFixedScreen {
             FixedScreenProgress.release()
         }
-        let doneLine = theme.useEmoji
-            ? theme.wrap("✅ All generations complete", ANSI.fgGreen + ANSI.bold)
-            : "Done."
-        fputs("\(doneLine)\n", stderr)
-        fflush(stderr)
+        if usesRustTUI {
+            StderrGate.setRustTUIActive(false)
+            if let rustTUI {
+                await rustTUI.shutdown()
+            }
+            StderrGate.writeLine("✅ All generations complete")
+        } else {
+            let doneLine = theme.useEmoji
+                ? theme.wrap("✅ All generations complete", ANSI.fgGreen + ANSI.bold)
+                : "Done."
+            fputs("\(doneLine)\n", stderr)
+            fflush(stderr)
+        }
     }
 
     private func animationHeartbeat() {
@@ -377,6 +418,21 @@ public actor CLIWorkerPoolProgress {
             batchEtaSeconds: batchETA,
             slots: formattedSlots
         )
+        if usesRustTUI, let rustTUI {
+            let snap = RustTUISnapshot.fromWorkerPool(
+                label: label,
+                completed: completed,
+                total: total,
+                tick: animationTick,
+                status: latestStatus,
+                messages: Array(statusHistory.suffix(2)),
+                batchSpent: batchSpent,
+                batchETA: batchETA,
+                slots: formattedSlots
+            )
+            Task { try? await rustTUI.sendSnapshot(snap) }
+            return
+        }
         CLIProgressFormatting.writeMultiline(lines, previousLineCount: &previousLineCount, useFixedScreen: usesFixedScreen)
     }
 

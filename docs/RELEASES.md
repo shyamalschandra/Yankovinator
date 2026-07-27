@@ -2,11 +2,12 @@
 
 Yankovinator publishes pre-built macOS binaries so you can install without a Swift toolchain.
 
-**Current release:** [v1.06.3](https://github.com/shyamalschandra/Yankovinator/releases/tag/v1.06.3)
+**Current release:** [v1.06.4](https://github.com/shyamalschandra/Yankovinator/releases/tag/v1.06.4)
 
 ## What each archive contains
 
 - `yankovinator` — parody generator CLI
+- `yankovinator-tui` — Rust/ratatui batch progress dashboard (v1.06.4+)
 - `keyword-generator` — theme keyword generator CLI
 - `benchmark` — performance benchmark CLI (when included in the build)
 - `*.sha256` — checksums for verification
@@ -23,7 +24,7 @@ Yankovinator publishes pre-built macOS binaries so you can install without a Swi
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.3/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.4/yankovinator-universal.tar.gz
 
 # Verify checksum (compare to the release .sha256 asset)
 shasum -a 256 yankovinator-universal.tar.gz

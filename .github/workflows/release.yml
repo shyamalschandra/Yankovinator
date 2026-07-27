@@ -28,6 +28,18 @@ jobs:
           swift --version
           xcodebuild -version
           uname -m
+          rustc --version || (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && source "$HOME/.cargo/env" && rustc --version)
+      
+      - name: Build Rust batch TUI (arm64)
+        run: |
+          set -euo pipefail
+          source "$HOME/.cargo/env" 2>/dev/null || true
+          cd tui
+          cargo build --release
+          cd ..
+          mkdir -p dist/arm64
+          cp tui/target/release/yankovinator-tui dist/arm64/yankovinator-tui
+          chmod +x dist/arm64/yankovinator-tui
       
       - name: Build for arm64 (native)
         run: |
@@ -45,12 +57,29 @@ jobs:
           fi
           cp "$YANKO_BIN" dist/arm64/yankovinator
           cp "$KEYWORD_BIN" dist/arm64/keyword-generator
+          if [ -f dist/arm64/yankovinator-tui ]; then
+            echo "Bundled yankovinator-tui (Rust/ratatui)"
+          fi
           if [ -n "${BENCHMARK_BIN:-}" ]; then
             cp "$BENCHMARK_BIN" dist/arm64/benchmark
             chmod +x dist/arm64/benchmark
           fi
           chmod +x dist/arm64/yankovinator dist/arm64/keyword-generator
           file dist/arm64/yankovinator
+      
+      - name: Build Rust batch TUI (x86_64)
+        run: |
+          set -euo pipefail
+          source "$HOME/.cargo/env" 2>/dev/null || true
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            cd tui
+            rm -rf target
+            arch -x86_64 cargo build --release
+            cd ..
+            mkdir -p dist/x86_64
+            cp tui/target/release/yankovinator-tui dist/x86_64/yankovinator-tui
+            chmod +x dist/x86_64/yankovinator-tui
+          fi
       
       - name: Build for x86_64 (via Rosetta)
         run: |
@@ -93,18 +122,16 @@ jobs:
       - name: Create binary archives
         run: |
           cd dist/arm64
-          if [ -f benchmark ]; then
-            tar -czf ../yankovinator-arm64.tar.gz yankovinator keyword-generator benchmark
-          else
-            tar -czf ../yankovinator-arm64.tar.gz yankovinator keyword-generator
-          fi
+          extras=""
+          [ -f yankovinator-tui ] && extras="$extras yankovinator-tui"
+          [ -f benchmark ] && extras="$extras benchmark"
+          tar -czf ../yankovinator-arm64.tar.gz yankovinator keyword-generator $extras
           cd ../x86_64
           if [ -f yankovinator ] && [ -f keyword-generator ]; then
-            if [ -f benchmark ]; then
-              tar -czf ../yankovinator-x86_64.tar.gz yankovinator keyword-generator benchmark
-            else
-              tar -czf ../yankovinator-x86_64.tar.gz yankovinator keyword-generator
-            fi
+            extras=""
+            [ -f yankovinator-tui ] && extras="$extras yankovinator-tui"
+            [ -f benchmark ] && extras="$extras benchmark"
+            tar -czf ../yankovinator-x86_64.tar.gz yankovinator keyword-generator $extras
           else
             echo "x86_64 archive creation skipped"
           fi
@@ -261,6 +288,7 @@ jobs:
             Local AI parody generator using NaturalLanguage + Ollama (`llama3.2:3b`).
 
             ### What's new
+            - **v1.06.4:** Batch resume checkpoint (`.yankovinator/`, `--fresh-batch`); Rust `yankovinator-tui` (ratatui) for UTF-8 worker dashboard
             - **v1.06.3:** ANSI alternate-screen TUI (restore color/emoji/Unicode; fix ncurses garble + segfault)
             - **v1.06.2:** ncurses alternate-screen batch TUI (no scrolling dashboard on macOS)
             - **v1.06.1:** Fix parallel batch trace trap — NL lock coverage, main-thread MIDI progress, TUI coalescing

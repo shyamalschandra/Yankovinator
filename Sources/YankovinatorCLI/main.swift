@@ -21,6 +21,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
           # Outputs best: out/<theme>/<song>.parody.txt
           # Optional: --keep-candidates writes ranked variants
           # If songs×themes×candidates > 100, add --force
+          # Stop/restart: progress is checkpointed under --output-dir/.yankovinator (use --fresh-batch to reset)
         """
     )
 
@@ -89,6 +90,9 @@ struct YankovinatorCLI: AsyncParsableCommand {
 
     @Flag(name: .long, help: "Extra Ollama hill-climbing per line in batch (syllables/POS/coherence); slower but higher fit scores")
     var fitOptimize: Bool = false
+
+    @Flag(name: .long, help: "Discard saved batch checkpoint in --output-dir/.yankovinator and regenerate all jobs")
+    var freshBatch: Bool = false
 
     // Validate options after parsing
     mutating func validate() throws {
@@ -256,7 +260,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
             )
         }
         try enforceGenerationBudget(baseJobs: jobs.count, songCountHint: nil, themeCountHint: nil)
-        try await runJobs(jobs, label: "songs × themes × candidates")
+        try await runJobs(jobs, outputRoot: outputDir, label: "songs × themes × candidates")
     }
 
     private func enforceGenerationBudget(
@@ -300,6 +304,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
 
     private func runJobs(
         _ jobs: [ParodyBatchJob],
+        outputRoot: String,
         label: String
     ) async throws {
         let generations = jobs.count * candidates
@@ -332,6 +337,34 @@ struct YankovinatorCLI: AsyncParsableCommand {
             }
         }
 
+        let jobsFingerprint = BatchResumeStore.jobsFingerprint(jobs: jobs, candidates: candidates, model: model)
+        let resumeManifest = BatchResumeManifest(
+            model: model,
+            candidates: candidates,
+            jobsFingerprint: jobsFingerprint
+        )
+        let resumeStore: BatchResumeStore
+        do {
+            resumeStore = try BatchResumeStore(outputRoot: outputRoot, manifest: resumeManifest, fresh: freshBatch)
+        } catch let error as BatchResumeError {
+            throw ValidationError(error.description)
+        }
+
+        var scoredPreloaded: [ScoredExpansion] = []
+        var pendingExpanded: [ExpandedCandidateJob] = []
+        pendingExpanded.reserveCapacity(expanded.count)
+        for item in expanded {
+            if await resumeStore.isComplete(jobID: item.job.id, candidateIndex: item.candidateIndex),
+               let restored = await resumeStore.restoredResult(jobID: item.job.id, candidateIndex: item.candidateIndex) {
+                scoredPreloaded.append(ScoredExpansion(job: item.job, result: restored))
+            } else {
+                pendingExpanded.append(item)
+            }
+        }
+
+        let restoredCount = scoredPreloaded.count
+        let pendingGenerations = pendingExpanded.count
+
         var lyricsByPath: [String: [String]] = [:]
         var keywordsByPath: [String: [String: String]] = [:]
         lyricsByPath.reserveCapacity(jobs.count)
@@ -362,31 +395,48 @@ struct YankovinatorCLI: AsyncParsableCommand {
             )
         }
 
-        let showProgress = !noProgress && generations > 1
+        let showProgress = !noProgress && generations > 1 && pendingGenerations > 0
         let poolSize = consumerPoolSize(effectiveRequestedWorkers: rx.effectiveWorkers)
         let serverParallel = resolvedOllamaNumParallel()
         let progressHandle: CLIWorkerPoolProgress? =
             (showProgress && TerminalProgress.isInteractive && poolSize > 1)
             ? CLIWorkerPoolProgress(
-                total: generations,
+                total: pendingGenerations,
                 workerCount: poolSize,
                 label: "Generations",
                 enableMIDI: midiProgress
             )
             : nil
 
+        if restoredCount > 0 {
+            let msg = "Resume: skipping \(restoredCount) finished generation(s) from \(outputRoot)/\(BatchResumeStore.stateDirectoryName)/"
+            if verbose {
+                print(msg)
+            } else if let progressHandle {
+                Task { await progressHandle.postMessage(msg) }
+            } else {
+                StderrGate.writeLine("ℹ️  \(msg)")
+            }
+        }
+
         if showProgress && TerminalProgress.isInteractive {
-            fputs("🚀 Starting \(generations) generations (\(poolSize) cloud workers)…\n", stderr)
-            fflush(stderr)
+            let startMsg = "🚀 Starting \(pendingGenerations) generations (\(poolSize) cloud workers)…"
+            if let progressHandle {
+                Task { await progressHandle.postMessage(startMsg) }
+            } else {
+                StderrGate.writeLine(startMsg)
+            }
         }
         if candidates > 1 || fitOptimize {
-            fputs(
+            let batchHint =
                 "ℹ️  Batch: one `/api/generate` per lyric line; POS+OED prompts; global fit scoring" +
                 (fitOptimize ? "; --fit-optimize hill-climbs weak lines" : "") +
-                "; checkpoints update .parody.txt as candidates finish.\n",
-                stderr
-            )
-            fflush(stderr)
+                "; checkpoints under .yankovinator/ and .parody.txt as candidates finish."
+            if progressHandle != nil {
+                Task { await progressHandle?.postMessage(batchHint) }
+            } else {
+                StderrGate.writeLine(batchHint)
+            }
         }
 
         let useTUIStatus = progressHandle != nil
@@ -394,8 +444,12 @@ struct YankovinatorCLI: AsyncParsableCommand {
         let batchRefinementPasses = 0
         let enableCoherenceRegeneration = false
         let checkpoint = BatchOutputCheckpoint()
-        let scored: [ScoredExpansion] = try await ParallelJobRunner.map(
-            items: expanded,
+        let scoredNew: [ScoredExpansion]
+        if pendingExpanded.isEmpty {
+            scoredNew = []
+        } else {
+            scoredNew = try await ParallelJobRunner.map(
+            items: pendingExpanded,
             workers: rx.effectiveWorkers,
             showProgress: showProgress,
             progressLabel: "Generations",
@@ -481,6 +535,8 @@ struct YankovinatorCLI: AsyncParsableCommand {
             )
             let result = ParodyCandidateResult(index: item.candidateIndex, lines: parodyLines, score: score)
 
+            try await resumeStore.record(job: item.job, result: result)
+
             if candidates > 1 {
                 try await checkpoint.consider(job: item.job, result: result) { message in
                     if useTUIStatus {
@@ -510,6 +566,9 @@ struct YankovinatorCLI: AsyncParsableCommand {
 
             return ScoredExpansion(job: item.job, result: result)
         }
+        }
+
+        let scored = scoredPreloaded + scoredNew
 
         // Group by job id, pick best candidate, write outputs.
         var byJob: [String: [ScoredExpansion]] = [:]
