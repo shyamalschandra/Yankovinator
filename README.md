@@ -49,11 +49,11 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.9**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.10**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.9/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.10/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator yankovinator-tui keyword-generator /usr/local/bin/
@@ -72,7 +72,7 @@ See [docs/RELEASES.md](docs/RELEASES.md) for architecture-specific downloads and
 brew tap shyamalschandra/yankovinator
 brew install yankovinator
 
-yankovinator --version          # → 1.06.9+
+yankovinator --version          # → 1.06.10+
 yankovinator --help
 keyword-generator --help
 ```
@@ -349,7 +349,8 @@ See [docs/CERTIFICATION.md](docs/CERTIFICATION.md). Latest run summary: [docs/ce
 | Resource | Description |
 |---|---|
 | [QUICK_START.md](QUICK_START.md) | Fast path from clone to first parody |
-| [RELEASE_NOTES_v1.06.9.md](RELEASE_NOTES_v1.06.9.md) | Latest (TUI color boxes + emoji bars per worker) |
+| [RELEASE_NOTES_v1.06.10.md](RELEASE_NOTES_v1.06.10.md) | Latest (per-worker elapsed/remain on progress bars) |
+| [RELEASE_NOTES_v1.06.9.md](RELEASE_NOTES_v1.06.9.md) | TUI color boxes + emoji bars per worker |
 | [RELEASE_NOTES_v1.06.8.md](RELEASE_NOTES_v1.06.8.md) | Expanded certification battery + docs/Pages |
 | [RELEASE_NOTES_v1.06.7.md](RELEASE_NOTES_v1.06.7.md) | Fit-optimize parallel NL segfault fix |
 | [RELEASE_NOTES_v1.06.6.md](RELEASE_NOTES_v1.06.6.md) | PATH TUI resolve + no Swift multiline segfault |

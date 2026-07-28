@@ -49,10 +49,23 @@ final class CLIProgressFormattingTests: XCTestCase {
         XCTAssertTrue(visible[1].contains("cloud worker"))
         XCTAssertTrue(visible[2].contains("W01"))
         XCTAssertTrue(visible[2].contains("#3"))
-        XCTAssertTrue(visible[2].contains("spent"))
-        XCTAssertTrue(visible[2].contains("ETA"))
+        XCTAssertTrue(visible[2].contains("elapsed"))
+        XCTAssertTrue(visible[2].contains("remain"))
         XCTAssertTrue(visible[3].contains("W02"))
         XCTAssertTrue(visible[3].contains("idle"))
+        XCTAssertTrue(visible[3].contains("elapsed"))
+        XCTAssertTrue(visible[3].contains("remain"))
+    }
+
+    func testWorkerTimingLabelUsesElapsedAndRemain() {
+        let label = CLIProgressFormatting.workerTimingLabel(
+            spent: 12,
+            eta: 34,
+            theme: .plain
+        )
+        let visible = CLIProgressFormatting.visibleText(label)
+        XCTAssertTrue(visible.contains("elapsed 12s"))
+        XCTAssertTrue(visible.contains("remain ~34s"))
     }
 
     func testFormatDurationAndETA() {

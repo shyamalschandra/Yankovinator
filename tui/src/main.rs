@@ -208,7 +208,7 @@ fn worker_box_height() -> u16 {
 
 fn draw_overall(frame: &mut Frame, app: &App, area: Rect) {
     let ratio = (app.completed as f64 / app.total as f64).clamp(0.0, 1.0);
-    let bar_width = area.width.saturating_sub(4).min(28).max(8) as usize;
+    let bar_width = area.width.saturating_sub(4).min(22).max(8) as usize;
     let bar = emoji_bar(ratio, bar_width, "🟩", "⬜");
     let title = format!(
         "☁️  Yankovinator · {} · {}/{} ({:.0}%)",
@@ -218,23 +218,33 @@ fn draw_overall(frame: &mut Frame, app: &App, area: Rect) {
         ratio * 100.0
     );
     let timing = format!(
-        "⏱ {}   ⌛ {}",
+        "elapsed {} · remain {}",
         format_duration(app.batch_spent_secs),
         format_eta(app.batch_eta_secs)
     );
     let status = if app.status.is_empty() {
-        timing
+        String::new()
     } else {
-        format!("💬 {} · {}", truncate(&app.status, 48), timing)
+        truncate(&app.status, 56)
     };
-    let body = Paragraph::new(vec![
-        Line::from(Span::styled(
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
             format!("{bar}  {:.0}%", ratio * 100.0),
             Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(status, Style::default().fg(Color::Yellow))),
-    ])
-    .block(
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("⏱ {timing}"),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ),
+    ])];
+    if !status.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("💬 {status}"),
+            Style::default().fg(Color::Gray),
+        )));
+    }
+    let body = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
@@ -285,7 +295,8 @@ fn draw_messages(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_worker_box(frame: &mut Frame, app: &App, index: usize, worker: &WorkerSnap, area: Rect) {
     let (color, fill, empty) = worker_style(index);
     let ratio = worker_ratio(worker, app.tick);
-    let bar_cells = area.width.saturating_sub(4).min(18).max(6) as usize;
+    // Leave room on the bar row for "elapsed … · remain …"
+    let bar_cells = area.width.saturating_sub(36).min(14).max(5) as usize;
     let bar = emoji_bar(ratio, bar_cells, fill, empty);
 
     let (state_emoji, state_text, border_color) = if worker.idle {
@@ -303,13 +314,11 @@ fn draw_worker_box(frame: &mut Frame, app: &App, index: usize, worker: &WorkerSn
     };
 
     let title = format!(" 🧵 W{:02} {state_emoji} {state_text} ", index + 1);
-    let timing = format!(
-        "⏱ {}   ⌛ {}",
-        format_duration(worker.spent_secs),
-        format_eta(worker.eta_secs)
-    );
+    let elapsed = format_duration(worker.spent_secs);
+    let remain = format_eta(worker.eta_secs);
     let pct = format!("{:.0}%", ratio * 100.0);
 
+    // Timing lives on the progress bar row so each worker bar shows elapsed + remaining.
     let body = Paragraph::new(vec![
         Line::from(vec![
             Span::styled(
@@ -317,9 +326,33 @@ fn draw_worker_box(frame: &mut Frame, app: &App, index: usize, worker: &WorkerSn
                 Style::default().fg(border_color).add_modifier(Modifier::BOLD),
             ),
             Span::raw(" "),
-            Span::styled(pct, Style::default().fg(Color::White)),
+            Span::styled(
+                pct,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("⏱ elapsed {elapsed}"),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled(" · ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("⌛ remain {remain}"),
+                Style::default().fg(Color::LightGreen),
+            ),
         ]),
-        Line::from(Span::styled(timing, Style::default().fg(Color::Gray))),
+        Line::from(Span::styled(
+            if worker.idle {
+                "waiting for next generation".to_string()
+            } else if worker.line.is_some() {
+                "tracking line progress".to_string()
+            } else {
+                "estimating from recent jobs".to_string()
+            },
+            Style::default().fg(Color::DarkGray),
+        )),
     ])
     .alignment(Alignment::Left)
     .block(

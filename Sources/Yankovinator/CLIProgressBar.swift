@@ -440,29 +440,49 @@ public actor CLIWorkerPoolProgress {
         previousLineCount = 1
     }
 
+    /// Elapsed time shown on each worker progress bar.
+    /// Working slots: current job only. Idle slots: cumulative busy time for that worker.
     private func spentSeconds(workerID: Int, slot: Slot, now: Date) -> TimeInterval {
-        var total = workerBusySeconds[workerID]
-        if case .working(_, _, let startedAt, _, _) = slot {
-            total += max(0, now.timeIntervalSince(startedAt))
+        switch slot {
+        case .working(_, _, let startedAt, _, _):
+            return max(0, now.timeIntervalSince(startedAt))
+        case .idle:
+            return workerBusySeconds[workerID]
         }
-        return total
     }
 
+    /// Remaining estimate for the worker progress bar (current job + share of queue).
     private func estimatedRemainingSeconds(workerID: Int, slot: Slot, now: Date) -> TimeInterval? {
         _ = workerID
         let jobsLeft = max(0, total - completed)
         guard jobsLeft > 0 else { return 0 }
-        guard let avg = averageJobSeconds else { return nil }
-
-        let queueShare = (Double(jobsLeft) / Double(workerCount)) * avg
 
         switch slot {
         case .idle:
-            return queueShare
-        case .working(_, _, let startedAt, _, _):
+            guard let avg = averageJobSeconds else { return nil }
+            return (Double(jobsLeft) / Double(workerCount)) * avg
+        case .working(_, _, let startedAt, let line, let lineTotal):
             let elapsed = max(0, now.timeIntervalSince(startedAt))
-            let currentJobLeft = max(0, avg - elapsed)
-            let futureJobs = max(0, Double(jobsLeft - 1) / Double(workerCount)) * avg
+            let currentJobLeft: TimeInterval?
+            if let line, let lineTotal, line > 0, lineTotal > line {
+                // Line-progress ETA for the active generation.
+                let perLine = elapsed / Double(line)
+                currentJobLeft = perLine * Double(lineTotal - line)
+            } else if let avg = averageJobSeconds {
+                currentJobLeft = max(0, avg - elapsed)
+            } else if let line, let lineTotal, line > 0, lineTotal == line {
+                currentJobLeft = 0
+            } else {
+                currentJobLeft = nil
+            }
+
+            guard let currentJobLeft else { return nil }
+            let futureJobs: TimeInterval
+            if let avg = averageJobSeconds {
+                futureJobs = max(0, Double(jobsLeft - 1) / Double(workerCount)) * avg
+            } else {
+                futureJobs = 0
+            }
             return currentJobLeft + futureJobs
         }
     }
@@ -512,11 +532,11 @@ enum CLIProgressFormatting {
     }
 
     static func workerTimingLabel(spent: TimeInterval, eta: TimeInterval?, theme: TUITheme) -> String {
-        let spentEmoji = theme.useEmoji ? "⏱ " : "spent "
-        let etaEmoji = theme.useEmoji ? "⌛ " : "ETA "
-        let spentText = theme.wrap("\(spentEmoji)\(formatDuration(spent))", ANSI.fgWhite)
-        let etaText = theme.wrap("\(etaEmoji)\(formatETA(eta))", ANSI.fgGreen)
-        return "\(spentText) \(etaText)"
+        let spentLabel = theme.useEmoji ? "⏱ elapsed " : "elapsed "
+        let etaLabel = theme.useEmoji ? "⌛ remain " : "remain "
+        let spentText = theme.wrap("\(spentLabel)\(formatDuration(spent))", ANSI.fgWhite)
+        let etaText = theme.wrap("\(etaLabel)\(formatETA(eta))", ANSI.fgGreen)
+        return "\(spentText) · \(etaText)"
     }
 
     private static let partialBlocks: [Character] = ["▏", "▎", "▍", "▌", "▋", "▊", "▉"]
@@ -565,11 +585,11 @@ enum CLIProgressFormatting {
         var lines: [String] = []
         let batchTiming = theme.useEmoji
             ? theme.wrap(
-                "⏱ \(formatDuration(batchSpentSeconds))  ⌛ \(formatETA(batchEtaSeconds))",
+                "⏱ elapsed \(formatDuration(batchSpentSeconds)) · ⌛ remain \(formatETA(batchEtaSeconds))",
                 ANSI.dim + ANSI.fgCyan
             )
             : theme.wrap(
-                "spent \(formatDuration(batchSpentSeconds))  ETA \(formatETA(batchEtaSeconds))",
+                "elapsed \(formatDuration(batchSpentSeconds)) · remain \(formatETA(batchEtaSeconds))",
                 ANSI.dim + ANSI.fgCyan
             )
         let overallRail = statusRail.isEmpty ? batchTiming : "\(statusRail)  ·  \(batchTiming)"
@@ -611,7 +631,16 @@ enum CLIProgressFormatting {
                 let timing = workerTimingLabel(spent: spent, eta: eta, theme: theme)
                 lines.append("│ \(workerLabel) \(boxAround(bar, theme: theme)) \(state)  \(timing)")
             case .working(let jobNumber, let slotTick, let spent, let eta, let line, let lineTotal):
-                let bar = unicodeIndeterminateBar(tick: slotTick + tick, width: workerBarWidth, theme: theme)
+                let bar: String
+                if let line, let lineTotal, lineTotal > 0 {
+                    bar = unicodeDeterminateBar(
+                        ratio: Double(line) / Double(lineTotal),
+                        width: workerBarWidth,
+                        theme: theme
+                    )
+                } else {
+                    bar = unicodeIndeterminateBar(tick: slotTick + tick, width: workerBarWidth, theme: theme)
+                }
                 let stateEmoji = theme.useEmoji ? "⚡ " : ""
                 var state = theme.wrap("\(stateEmoji)#\(jobNumber)", ANSI.fgYellow)
                 if let line, let lineTotal, lineTotal > 0 {
