@@ -23,7 +23,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
           # If songs×themes×candidates > 100, add --force
           # Stop/restart: progress is checkpointed under --output-dir/.yankovinator (use --fresh-batch to reset)
         """,
-        version: "1.06.10"
+        version: "1.06.11"
     )
 
     @Option(name: [.long, .customShort("u")], help: "Ollama API base URL (local or cloud)")
@@ -242,7 +242,8 @@ struct YankovinatorCLI: AsyncParsableCommand {
             model: model,
             workers: workers,
             ollamaNumParallel: serverParallel,
-            timeoutOverride: ollamaTimeout
+            timeoutOverride: ollamaTimeout,
+            applyCloudPrescription: !noCloudPrescription
         )
 
         let generator = ParodyGenerator(ollamaBaseURL: ollamaURL, ollamaModel: model)
@@ -401,7 +402,16 @@ struct YankovinatorCLI: AsyncParsableCommand {
                 model: model,
                 workers: rx.effectiveWorkers,
                 ollamaNumParallel: resolvedOllamaNumParallel(),
-                timeoutOverride: timeout
+                timeoutOverride: timeout,
+                applyCloudPrescription: !noCloudPrescription
+            )
+        } else if rx.appliedWorkerCap || CloudBatchPrescription.isCloudModel(model) {
+            OllamaClient.applyRuntimePolicy(
+                model: model,
+                workers: rx.effectiveWorkers,
+                ollamaNumParallel: resolvedOllamaNumParallel(),
+                timeoutOverride: ollamaTimeout,
+                applyCloudPrescription: !noCloudPrescription
             )
         }
 

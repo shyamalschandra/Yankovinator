@@ -11,8 +11,8 @@ public enum ParallelJobRunner {
     /// Default concurrency (sequential).
     public static let defaultWorkers = 1
 
-    /// Suggested worker count for cloud Ollama batch runs.
-    public static let recommendedCloudWorkers = 32
+    /// Suggested worker count for cloud Ollama batch runs (rate-limit safe).
+    public static let recommendedCloudWorkers = 4
 
     /// Hard upper bound for CLI `--workers` (producer-consumer queue depth).
     public static let maxWorkers = 128
@@ -33,8 +33,8 @@ public enum ParallelJobRunner {
             return max(1, min(consumerOverride, maxConcurrentConsumers))
         }
         var requested = clampWorkers(requestedWorkers)
-        if applyCloudPrescription, let model, CloudBatchPrescription.isHeavyCloudModel(model) {
-            requested = min(requested, CloudBatchPrescription.heavyCloudMaxConsumers)
+        if applyCloudPrescription, let model, CloudBatchPrescription.isCloudModel(model) {
+            requested = min(requested, CloudBatchPrescription.maxConsumers(for: model))
         }
         let base = min(requested, maxConcurrentConsumers)
         guard let ollamaNumParallel, ollamaNumParallel >= 1 else { return base }

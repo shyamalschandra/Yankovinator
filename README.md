@@ -49,11 +49,11 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.10**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.11**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.10/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.11/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator yankovinator-tui keyword-generator /usr/local/bin/
@@ -72,7 +72,7 @@ See [docs/RELEASES.md](docs/RELEASES.md) for architecture-specific downloads and
 brew tap shyamalschandra/yankovinator
 brew install yankovinator
 
-yankovinator --version          # → 1.06.10+
+yankovinator --version          # → 1.06.11+
 yankovinator --help
 keyword-generator --help
 ```
@@ -162,7 +162,7 @@ swift run yankovinator --input-dir <songs-dir> --themes-dir <themes-dir> --outpu
 - `--ollama-timeout <sec>`: Per-request Ollama HTTP timeout (30–900; heavy `:cloud` models default to 600s)
 - `--no-progress`: Disable stderr progress bar for batch / multi-candidate runs
 - `--midi-progress`: Lightweight MIDI cues per worker bar (macOS, interactive terminal only)
-- `--no-cloud-prescription`: Disable auto tuning for heavy `:cloud` models (worker cap, 600s timeout, fast batch coherence)
+- `--no-cloud-prescription`: Disable auto tuning for `:cloud` models (worker cap ≤4, timeout, fast batch coherence)
 - `--analyze, -a`: Show syllable analysis
 - `--verbose, -v`: Verbose output
 
@@ -191,12 +191,16 @@ swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./
 
 **Batch TUI (fix garbled Unicode / segfaults):** Release tarballs include **`yankovinator-tui`** (Rust + ratatui): ncurses-like **color boxes** and **emoji progress bars** for each threaded worker, plus an overall batch gauge and status feed. Install it **next to** `yankovinator` (same directory). The CLI auto-spawns it for multi-worker runs. From source: `cd tui && cargo build --release` (binary at `tui/target/release/yankovinator-tui`). Override path with `YANKOVINATOR_TUI_PATH`; disable with `YANKOVINATOR_RUST_TUI=0`. Use `--no-progress` for plain logs only.
 
-**Cloud Ollama (10 workers):**
+**Cloud Ollama (rate-limit safe):**
+
+Cloud models (`*:cloud`, including via local `localhost:11434` proxy) get automatic **retries** on **429 / 502 / 503** (backoff + `Retry-After`) and a default consumer cap of **4**. Prefer:
 
 ```bash
-swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
-  --ollama-url https://ollama.example.com --workers 10 --verbose
+yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
+  --model gemma4:31b-cloud --workers 4 --candidates 20 --force --verbose
 ```
+
+Raising `--workers` / `--ollama-num-workers` above ~4 against cloud often triggers **429** or ephemeral-port exhaustion (`can't assign requested address`). Use **`--no-cloud-prescription`** only if you accept that risk. If a failed run left a bad checkpoint, add **`--fresh-batch`**.
 
 **Ollama server parallelism (local `ollama serve`):**
 
@@ -207,16 +211,16 @@ export OLLAMA_NUM_PARALLEL=10   # set before starting the server; restart requir
 ollama serve
 ```
 
-The CLI reads `$OLLAMA_NUM_PARALLEL` on `localhost` or you can pass `--ollama-num-parallel 10`.
+The CLI reads `$OLLAMA_NUM_PARALLEL` on `localhost` or you can pass `--ollama-num-parallel 10`. Local (non-`:cloud`) models are not capped by cloud prescription.
 
-**Heavy cloud batch (`qwen3.5:397b-cloud`, etc.):** stderr **prescription** may cap parallel HTTP workers at **64**, sets **600s** timeout if unset, and uses batch fast path with checkpoints. Use **`--no-cloud-prescription`** for the full `--workers` count (up to 128).
+**Heavy cloud batch (`qwen3.5:397b-cloud`, etc.):** stderr **prescription** caps parallel HTTP workers at **4**, may set **600s** timeout if unset, and uses batch fast path with checkpoints. Use **`--no-cloud-prescription`** for a higher `--workers` count (up to 128) at your own rate-limit risk.
 
-**High-throughput cloud batch (64 workers):**
+**Higher cloud concurrency (opt-in):**
 
 ```bash
 yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
-  --workers 64 --ollama-num-workers 64 --no-cloud-prescription \
-  --candidates 20 --fit-optimize --force --verbose
+  --workers 8 --no-cloud-prescription \
+  --candidates 20 --force --verbose --model gemma4:31b-cloud
 ```
 
 ### Benchmark
@@ -349,7 +353,8 @@ See [docs/CERTIFICATION.md](docs/CERTIFICATION.md). Latest run summary: [docs/ce
 | Resource | Description |
 |---|---|
 | [QUICK_START.md](QUICK_START.md) | Fast path from clone to first parody |
-| [RELEASE_NOTES_v1.06.10.md](RELEASE_NOTES_v1.06.10.md) | Latest (per-worker elapsed/remain on progress bars) |
+| [RELEASE_NOTES_v1.06.11.md](RELEASE_NOTES_v1.06.11.md) | Latest (cloud 429/502 retries + consumer cap) |
+| [RELEASE_NOTES_v1.06.10.md](RELEASE_NOTES_v1.06.10.md) | Per-worker elapsed/remain on progress bars |
 | [RELEASE_NOTES_v1.06.9.md](RELEASE_NOTES_v1.06.9.md) | TUI color boxes + emoji bars per worker |
 | [RELEASE_NOTES_v1.06.8.md](RELEASE_NOTES_v1.06.8.md) | Expanded certification battery + docs/Pages |
 | [RELEASE_NOTES_v1.06.7.md](RELEASE_NOTES_v1.06.7.md) | Fit-optimize parallel NL segfault fix |

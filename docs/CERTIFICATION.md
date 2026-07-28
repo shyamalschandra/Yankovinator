@@ -9,7 +9,7 @@ export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 
 The script writes a machine-readable summary to [`certification-latest.txt`](certification-latest.txt) (published on GitHub Pages).
 
-**Expect version:** `1.06.10` (override with `YANKOVINATOR_EXPECT_VERSION`).
+**Expect version:** `1.06.11` (override with `YANKOVINATOR_EXPECT_VERSION`).
 
 ## Coverage matrix
 
@@ -46,7 +46,7 @@ E2E sections (7+) require a local Ollama with a usable model (default `llama3.2:
 | `DEVELOPER_DIR` | Xcode path for XCTest (default: `/Applications/Xcode.app/Contents/Developer`) |
 | `YANKOVINATOR_RUST_TUI=0` | Force Swift progress path (still certified in 4e / 16) |
 | `YANKOVINATOR_TUI_PATH` | Explicit `yankovinator-tui` binary |
-| `YANKOVINATOR_EXPECT_VERSION` | Version string asserted in phase 4 (default `1.06.10`) |
+| `YANKOVINATOR_EXPECT_VERSION` | Version string asserted in phase 4 (default `1.06.11`) |
 | `YANKOVINATOR_CERT_REPORT` | Report path (default `docs/certification-latest.txt`) |
 
 Exit code **0** only when every executed check passes.

@@ -1,12 +1,15 @@
 // Copyright (C) 2025, Shyamal Suhana Chandra
-// Auto-tuning for large cloud Ollama models (avoids 10× queue stalls)
+// Auto-tuning for cloud Ollama models (rate limits, connection exhaustion)
 
 import Foundation
 
-/// Recommended runtime adjustments when batching against heavy `:cloud` models.
+/// Recommended runtime adjustments when batching against `:cloud` models.
 public enum CloudBatchPrescription: Sendable {
-    /// Max concurrent consumer workers for heavy `:cloud` models when cloud prescription is enabled.
-    public static let heavyCloudMaxConsumers = 64
+    /// Soft max concurrent consumer workers for any `:cloud` model (rate-limit safe default).
+    public static let cloudMaxConsumers = 4
+
+    /// Soft max for very large `:cloud` models (still conservative vs. prior 64).
+    public static let heavyCloudMaxConsumers = 4
 
     /// Per-request timeout when CLI did not pass `--ollama-timeout`.
     public static let heavyCloudTimeoutSeconds = 600
@@ -23,6 +26,10 @@ public enum CloudBatchPrescription: Sendable {
         public let messages: [String]
     }
 
+    public static func isCloudModel(_ model: String) -> Bool {
+        model.lowercased().contains("cloud")
+    }
+
     public static func isHeavyCloudModel(_ model: String) -> Bool {
         let m = model.lowercased()
         guard m.contains("cloud") else { return false }
@@ -33,6 +40,11 @@ public enum CloudBatchPrescription: Sendable {
         return false
     }
 
+    /// Effective consumer cap for a cloud model under prescription.
+    public static func maxConsumers(for model: String) -> Int {
+        isHeavyCloudModel(model) ? heavyCloudMaxConsumers : cloudMaxConsumers
+    }
+
     public static func plan(
         model: String,
         requestedWorkers: Int,
@@ -40,7 +52,7 @@ public enum CloudBatchPrescription: Sendable {
         enabled: Bool
     ) -> Plan {
         let clamped = ParallelJobRunner.clampWorkers(requestedWorkers)
-        guard enabled, isHeavyCloudModel(model) else {
+        guard enabled, isCloudModel(model) else {
             return Plan(
                 requestedWorkers: clamped,
                 effectiveWorkers: clamped,
@@ -54,25 +66,33 @@ public enum CloudBatchPrescription: Sendable {
             )
         }
 
-        let capped = min(clamped, heavyCloudMaxConsumers)
+        let cap = maxConsumers(for: model)
+        let capped = min(clamped, cap)
         let appliedCap = capped < clamped
+        let heavy = isHeavyCloudModel(model)
         var messages: [String] = []
         if appliedCap {
             messages.append(
-                "Rx: Cap workers \(clamped)→\(capped) — limits parallel in-flight HTTP jobs (not model speed). Use --no-cloud-prescription for \(clamped)."
+                "Rx: Cap workers \(clamped)→\(capped) for :cloud rate limits (avoids 429 / port exhaustion). Use --no-cloud-prescription for \(clamped)."
+            )
+        } else {
+            messages.append(
+                "Rx: Cloud batch — keep --workers ≤\(cap) (or --consumers \(cap)) to stay under Ollama cloud rate limits."
             )
         }
 
         var appliedTimeout: Int?
         if ollamaTimeout == nil {
-            appliedTimeout = heavyCloudTimeoutSeconds
-            messages.append(
-                "Rx: Ollama timeout \(heavyCloudTimeoutSeconds)s for heavy cloud model (or set --ollama-timeout)."
-            )
+            if heavy {
+                appliedTimeout = heavyCloudTimeoutSeconds
+                messages.append(
+                    "Rx: Ollama timeout \(heavyCloudTimeoutSeconds)s for heavy cloud model (or set --ollama-timeout)."
+                )
+            }
         }
 
         messages.append(
-            "Rx: One generate call per lyric line in batch (refinement/coherence LLM loops off); checkpoints after each candidate."
+            "Rx: Retries with backoff on 429/502/503; one generate call per lyric line; checkpoints after each candidate."
         )
 
         return Plan(

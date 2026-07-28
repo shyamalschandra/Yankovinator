@@ -112,14 +112,20 @@ public class ParodyGenerator {
             rhymeGroups = clustered.rhymeGroups
             rhymeScheme = clustered.scheme
             if verbose {
-                Self.verbosePrint("Detected rhyme scheme: \(rhymeScheme) [\(clustered.method)]")
+                Self.verbosePrintOnce(
+                    key: "rhyme:\(rhymeScheme):\(clustered.method)",
+                    "Detected rhyme scheme: \(rhymeScheme) [\(clustered.method)]"
+                )
             }
         } else {
             let detected = RhymeSchemeAnalyzer.detectRhymeScheme(from: nonEmptyTexts)
             rhymeGroups = detected.rhymeGroups
             rhymeScheme = detected.scheme
             if verbose {
-                Self.verbosePrint("Detected rhyme scheme: \(rhymeScheme)")
+                Self.verbosePrintOnce(
+                    key: "rhyme:\(rhymeScheme)",
+                    "Detected rhyme scheme: \(rhymeScheme)"
+                )
             }
         }
         
@@ -1159,6 +1165,15 @@ public class ParodyGenerator {
     /// Serialize stdout logging from parallel workers (avoids interleaved / corrupted verbose spam).
     private static func verbosePrint(_ message: String) {
         NLConcurrency.synchronized {
+            print(message)
+        }
+    }
+
+    /// Print identical verbose lines at most once per process (e.g. rhyme scheme under high parallelism).
+    private static var verboseOnceKeys = Set<String>()
+    private static func verbosePrintOnce(key: String, _ message: String) {
+        NLConcurrency.synchronized {
+            guard verboseOnceKeys.insert(key).inserted else { return }
             print(message)
         }
     }

@@ -78,7 +78,7 @@ swift run benchmark \
   --iterations 5
 ```
 
-### Parallel batch on cloud Ollama (10 workers)
+### Parallel batch on cloud Ollama (rate-limit safe)
 
 ```bash
 mkdir -p songs themes out
@@ -87,10 +87,12 @@ cp data/example_lyrics.txt songs/b.txt
 cp data/example_keywords.txt themes/space.txt
 
 swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
-  --ollama-url https://ollama.example.com \
-  --workers 10 \
+  --model gemma4:31b-cloud \
+  --workers 4 \
   --verbose
 ```
+
+Cloud runs retry **429/502** with backoff and default-cap consumers at **4**. Higher `--workers` needs `--no-cloud-prescription` (risk of rate limits).
 
 ### Combinatorial batch (songs × themes × 10 candidates)
 
@@ -104,7 +106,7 @@ swift run yankovinator --input-dir ./songs --themes-dir ./themes \
   --output-dir ./out --workers 10 --candidates 10 --keep-candidates --verbose
 ```
 
-Best outputs land at `out/<theme>/<song>.parody.txt`. Effective generations = `songs × themes × candidates`. Above 100, pass `--force`. Up to **10 consumers** run concurrently; cap aligns with **`OLLAMA_NUM_PARALLEL`** on local Ollama ([FAQ](https://docs.ollama.com/faq)).
+Best outputs land at `out/<theme>/<song>.parody.txt`. Effective generations = `songs × themes × candidates`. Above 100, pass `--force`. Local runs align consumers with **`OLLAMA_NUM_PARALLEL`** ([FAQ](https://docs.ollama.com/faq)); `:cloud` models default to ≤**4** concurrent consumers.
 
 ### Certification battery (releases)
 

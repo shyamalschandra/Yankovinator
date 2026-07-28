@@ -63,7 +63,7 @@ final class ParallelJobRunnerTests: XCTestCase {
     }
 
     func testRecommendedCloudWorkersIsTen() {
-        XCTAssertEqual(ParallelJobRunner.recommendedCloudWorkers, 32)
+        XCTAssertEqual(ParallelJobRunner.recommendedCloudWorkers, 4)
         XCTAssertEqual(ParallelJobRunner.maxConcurrentConsumers, 128)
     }
 

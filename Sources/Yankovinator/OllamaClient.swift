@@ -20,9 +20,11 @@ public class OllamaClient {
     public static var tagsTimeoutSeconds = 10
 
     private static var workerConnectionHint = 16
-    private static let maxRetryAttempts = 4
+    private static var cloudConcurrencyLimit = 0
+    private static var maxRetryAttempts = OllamaRetryPolicy.defaultMaxAttempts
     private static var verifiedModelKeys: Set<String> = []
     private static let verificationLock = NSLock()
+    private static let cloudGate = CloudRequestGate()
 
     /// Mark model as already verified for this process (skips per-job `/api/tags` checks).
     public static func markModelVerified(baseURL: String, model: String) {
@@ -47,17 +49,35 @@ public class OllamaClient {
         model: String,
         workers: Int,
         ollamaNumParallel: Int? = nil,
-        timeoutOverride: Int? = nil
+        timeoutOverride: Int? = nil,
+        applyCloudPrescription: Bool = true
     ) {
         clientLock.lock()
         defer { clientLock.unlock() }
 
+        let isCloud = CloudBatchPrescription.isCloudModel(model)
         let concurrent = ParallelJobRunner.consumerPoolSize(
             requestedWorkers: workers,
             ollamaNumParallel: ollamaNumParallel,
+            model: model,
+            applyCloudPrescription: applyCloudPrescription,
             consumerOverride: nil
         )
-        workerConnectionHint = max(8, min(concurrent + 12, 512))
+
+        if isCloud {
+            // Prefer connection reuse; concurrency already reflects prescription / --workers.
+            workerConnectionHint = max(4, min(concurrent + 2, 32))
+            cloudConcurrencyLimit = max(1, concurrent)
+            maxRetryAttempts = OllamaRetryPolicy.defaultMaxAttempts
+        } else {
+            workerConnectionHint = max(8, min(concurrent + 12, 512))
+            cloudConcurrencyLimit = 0
+            maxRetryAttempts = 4
+        }
+
+        Task {
+            await cloudGate.reconfigure(limit: cloudConcurrencyLimit)
+        }
 
         if let existing = sharedHTTPClient {
             try? existing.syncShutdown()
@@ -68,7 +88,7 @@ public class OllamaClient {
             generateTimeoutSeconds = timeout
             surpriseTimeoutSeconds = max(45, timeout / 2)
             keywordsTimeoutSeconds = timeout
-        } else if model.lowercased().contains("cloud") {
+        } else if isCloud {
             generateTimeoutSeconds = CloudBatchPrescription.isHeavyCloudModel(model)
                 ? CloudBatchPrescription.heavyCloudTimeoutSeconds
                 : 300
@@ -88,9 +108,10 @@ public class OllamaClient {
             connect: .seconds(60),
             read: .seconds(600)
         )
-        configuration.connectionPool.idleTimeout = .seconds(120)
+        // Keep connections warm so parallel workers reuse sockets instead of exhausting ephemeral ports.
+        configuration.connectionPool.idleTimeout = .seconds(180)
         configuration.connectionPool.concurrentHTTP1ConnectionsPerHostSoftLimit =
-            max(16, workerConnectionHint)
+            max(4, workerConnectionHint)
         return configuration
     }
     
@@ -126,22 +147,70 @@ public class OllamaClient {
         self.httpClient = Self.sharedHTTPClient!
     }
 
+    /// Execute an HTTP request with retries for transient network errors and 429/502/503/504.
+    /// Returns the successful response and fully collected body (body is drained so connections can be reused).
     private func executeWithRetry(
         timeoutSeconds: Int,
         makeRequest: () throws -> HTTPClientRequest
-    ) async throws -> HTTPClientResponse {
+    ) async throws -> (HTTPClientResponse, Data) {
+        await Self.cloudGate.acquire()
+        do {
+            let result = try await executeWithRetryUnlocked(
+                timeoutSeconds: timeoutSeconds,
+                makeRequest: makeRequest
+            )
+            await Self.cloudGate.release()
+            return result
+        } catch {
+            await Self.cloudGate.release()
+            throw error
+        }
+    }
+
+    private func executeWithRetryUnlocked(
+        timeoutSeconds: Int,
+        makeRequest: () throws -> HTTPClientRequest
+    ) async throws -> (HTTPClientResponse, Data) {
         var lastError: Error?
         for attempt in 1...Self.maxRetryAttempts {
             do {
                 let request = try makeRequest()
-                return try await httpClient.execute(
+                let response = try await httpClient.execute(
                     request,
                     timeout: .seconds(Int64(timeoutSeconds))
                 )
+                var responseData = Data()
+                for try await buffer in response.body {
+                    responseData.append(contentsOf: buffer.readableBytesView)
+                }
+
+                let statusCode = Int(response.status.code)
+                if statusCode == 200 || !OllamaRetryPolicy.isRetryableHTTPStatus(statusCode) {
+                    return (response, responseData)
+                }
+
+                if attempt >= Self.maxRetryAttempts {
+                    return (response, responseData)
+                }
+
+                let retryAfterHeader = response.headers.first(name: "Retry-After")
+                    ?? response.headers.first(name: "retry-after")
+                let retryAfter = OllamaRetryPolicy.parseRetryAfterSeconds(retryAfterHeader)
+                let delay = OllamaRetryPolicy.backoffNanoseconds(
+                    attempt: attempt,
+                    retryAfterSeconds: retryAfter
+                )
+                lastError = OllamaError.httpError(
+                    statusCode: statusCode,
+                    message: " (retry \(attempt)/\(Self.maxRetryAttempts))"
+                )
+                try await Task.sleep(nanoseconds: delay)
+                continue
             } catch {
                 lastError = error
-                if attempt < Self.maxRetryAttempts, Self.isTransientNetworkError(error) {
-                    try await Task.sleep(nanoseconds: UInt64(attempt) * 2_000_000_000)
+                if attempt < Self.maxRetryAttempts, OllamaRetryPolicy.isTransientNetworkError(error) {
+                    let delay = OllamaRetryPolicy.backoffNanoseconds(attempt: attempt)
+                    try await Task.sleep(nanoseconds: delay)
                     continue
                 }
                 throw error
@@ -151,27 +220,6 @@ public class OllamaClient {
             throw lastError
         }
         throw OllamaError.invalidResponse
-    }
-
-    private static func isTransientNetworkError(_ error: Error) -> Bool {
-        let s = String(describing: error).lowercased()
-        // Timeouts are not retried — cloud models may legitimately run near the limit; retrying multiplies wall time.
-        if s.contains("timeout") || s.contains("deadline") || s.contains("timed out") {
-            return false
-        }
-        if error is HTTPClientError {
-            if s.contains("connection") {
-                return s.contains("reset") || s.contains("closed") || s.contains("refused")
-                    || s.contains("not connected")
-            }
-            return false
-        }
-        if s.contains("httpclienterror") || s.contains("error 1") { return true }
-        if s.contains("connection") {
-            return s.contains("reset") || s.contains("closed") || s.contains("refused")
-                || s.contains("not connected")
-        }
-        return false
     }
     
     deinit {
@@ -390,9 +438,10 @@ public class OllamaClient {
         
         // Execute request with detailed logging
         let response: HTTPClientResponse
+        let responseData: Data
         do {
             let jsonDataForRequest = jsonData
-            response = try await executeWithRetry(timeoutSeconds: Self.generateTimeoutSeconds) {
+            (response, responseData) = try await executeWithRetry(timeoutSeconds: Self.generateTimeoutSeconds) {
                 var request = HTTPClientRequest(url: apiURL)
                 request.method = .POST
                 request.headers.add(name: "Content-Type", value: "application/json")
@@ -404,12 +453,6 @@ public class OllamaClient {
         } catch {
             // Network-level error
             throw OllamaError.networkError(error)
-        }
-        
-        // Collect response body iteratively (collect() can hang with some Ollama responses)
-        var responseData = Data()
-        for try await buffer in response.body {
-            responseData.append(contentsOf: buffer.readableBytesView)
         }
         
         // Check response status
@@ -572,9 +615,10 @@ public class OllamaClient {
 
         let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
         let response: HTTPClientResponse
+        let responseData: Data
         do {
             let payload = jsonData
-            response = try await executeWithRetry(timeoutSeconds: Self.surpriseTimeoutSeconds) {
+            (response, responseData) = try await executeWithRetry(timeoutSeconds: Self.surpriseTimeoutSeconds) {
                 var request = HTTPClientRequest(url: apiURL)
                 request.method = .POST
                 request.headers.add(name: "Content-Type", value: "application/json")
@@ -584,11 +628,6 @@ public class OllamaClient {
             }
         } catch {
             throw OllamaError.networkError(error)
-        }
-
-        var responseData = Data()
-        for try await buffer in response.body {
-            responseData.append(contentsOf: buffer.readableBytesView)
         }
 
         guard response.status == .ok,
@@ -623,7 +662,7 @@ public class OllamaClient {
         }
         
         do {
-            let response = try await executeWithRetry(timeoutSeconds: Self.tagsTimeoutSeconds) {
+            let (response, responseData) = try await executeWithRetry(timeoutSeconds: Self.tagsTimeoutSeconds) {
                 var request = HTTPClientRequest(url: checkURL)
                 request.method = .GET
                 request.headers.add(name: "Connection", value: "keep-alive")
@@ -632,12 +671,6 @@ public class OllamaClient {
             
             guard response.status == .ok else {
                 return false
-            }
-            
-            // Check if model exists - collect body iteratively
-            var responseData = Data()
-            for try await buffer in response.body {
-                responseData.append(contentsOf: buffer.readableBytesView)
             }
             
             if let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
@@ -717,9 +750,10 @@ public class OllamaClient {
         let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
         
         let response: HTTPClientResponse
+        let responseData: Data
         do {
             let payload = jsonData
-            response = try await executeWithRetry(timeoutSeconds: Self.keywordsTimeoutSeconds) {
+            (response, responseData) = try await executeWithRetry(timeoutSeconds: Self.keywordsTimeoutSeconds) {
                 var request = HTTPClientRequest(url: apiURL)
                 request.method = .POST
                 request.headers.add(name: "Content-Type", value: "application/json")
@@ -731,17 +765,6 @@ public class OllamaClient {
         } catch let error as HTTPClientError {
             throw OllamaError.networkError(error)
         } catch {
-            throw OllamaError.networkError(error)
-        }
-        
-        // Collect response body with proper error handling
-        var responseData = Data()
-        do {
-            for try await buffer in response.body {
-                responseData.append(contentsOf: buffer.readableBytesView)
-            }
-        } catch {
-            // If body reading fails, it might be a connection issue
             throw OllamaError.networkError(error)
         }
         
@@ -819,7 +842,13 @@ public enum OllamaError: Error, CustomStringConvertible {
         case .invalidURL:
             return "Invalid Ollama URL"
         case .httpError(let statusCode, let message):
-            return "HTTP error \(statusCode)\(message)"
+            var tip = ""
+            if statusCode == 429 {
+                tip = " Rate limited — Yankovinator retries with backoff; lower --workers (cloud default ≤\(CloudBatchPrescription.cloudMaxConsumers)) if this persists."
+            } else if statusCode == 502 || statusCode == 503 || statusCode == 504 {
+                tip = " Upstream gateway error — retried with backoff; reduce concurrency if it keeps failing."
+            }
+            return "HTTP error \(statusCode)\(message)\(tip)"
         case .invalidResponse:
             return "Invalid response from Ollama API"
         case .emptyGenerateResponse:
@@ -846,15 +875,53 @@ public enum OllamaError: Error, CustomStringConvertible {
             var suggestions = ""
             if errorString.lowercased().contains("timeout") || errorString.lowercased().contains("deadline") {
                 suggestions = " This may indicate Ollama is taking too long to respond. Try increasing the timeout or checking if Ollama is processing a large request."
+            } else if errorString.lowercased().contains("can't assign requested address")
+                        || errorString.lowercased().contains("cannot assign requested address") {
+                suggestions = " Ephemeral ports were exhausted under high concurrency. Lower --workers (cloud default cap is \(CloudBatchPrescription.cloudMaxConsumers)) or wait and retry."
             } else if errorString.lowercased().contains("connection") && (errorString.lowercased().contains("close") || errorString.lowercased().contains("refused")) {
                 suggestions = " This may indicate Ollama stopped responding or is not accessible. Ensure Ollama is running: 'ollama serve'"
             } else if errorString.contains("error 1") || errorString.contains("HTTPClientError") {
-                suggestions = " Often caused by too many parallel cloud requests or a short timeout. Retry with --workers 4, fewer --candidates, or --ollama-timeout 600."
+                suggestions = " Often caused by too many parallel cloud requests or a short timeout. Retry with --workers \(CloudBatchPrescription.cloudMaxConsumers), fewer --candidates, or --ollama-timeout 600."
             }
             
             return "Network error: \(errorDescription).\(suggestions) Please verify Ollama is running: 'ollama serve'"
         case .modelNotFound(let model):
             return "Model '\(model)' not found. Please ensure the model is installed: ollama pull \(model)"
+        }
+    }
+}
+
+/// Limits in-flight Ollama HTTP calls for `:cloud` models (0 = unlimited / local).
+actor CloudRequestGate {
+    private var limit = 0
+    private var inFlight = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func reconfigure(limit newLimit: Int) {
+        limit = max(0, newLimit)
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending {
+            waiter.resume()
+        }
+    }
+
+    func acquire() async {
+        guard limit > 0 else { return }
+        while inFlight >= limit {
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                waiters.append(cont)
+            }
+        }
+        inFlight += 1
+    }
+
+    func release() {
+        guard limit > 0 else { return }
+        inFlight = max(0, inFlight - 1)
+        if !waiters.isEmpty {
+            let cont = waiters.removeFirst()
+            cont.resume()
         }
     }
 }
