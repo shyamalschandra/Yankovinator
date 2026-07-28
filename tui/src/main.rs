@@ -1,4 +1,5 @@
-//! Newline-delimited JSON on stdin; fixed alternate-screen dashboard on stderr's TTY (stdout).
+//! Newline-delimited JSON on stdin; ncurses-like alternate-screen dashboard
+//! with color boxes and emoji progress bars per threaded worker.
 
 use crossterm::{
     cursor::{Hide, Show},
@@ -6,10 +7,10 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
 use serde::Deserialize;
@@ -143,11 +144,6 @@ fn format_eta(secs: Option<f64>) -> String {
     }
 }
 
-fn indeterminate_ratio(slot_tick: u32, global_tick: u64) -> f64 {
-    let t = (slot_tick as u64 + global_tick) % 100;
-    (t as f64 / 100.0).max(0.08)
-}
-
 fn truncate(s: &str, max: usize) -> String {
     let t = s.trim();
     if t.chars().count() <= max {
@@ -158,113 +154,300 @@ fn truncate(s: &str, max: usize) -> String {
     out
 }
 
-fn draw(frame: &mut Frame, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(3),
-            Constraint::Length(1),
-        ])
-        .split(frame.area());
+/// Emoji block progress bar (ncurses-like filled gauge, UTF-8).
+fn emoji_bar(ratio: f64, width: usize, fill: &str, empty: &str) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let r = ratio.clamp(0.0, 1.0);
+    let filled = ((r * width as f64).round() as usize).min(width);
+    let mut out = String::with_capacity(width * fill.len());
+    for i in 0..width {
+        if i < filled {
+            out.push_str(fill);
+        } else {
+            out.push_str(empty);
+        }
+    }
+    out
+}
 
-    let overall_ratio = app.completed as f64 / app.total as f64;
-    let batch_timing = format!(
-        "⏱ {}  ⌛ {}",
-        format_duration(app.batch_spent_secs),
-        format_eta(app.batch_eta_secs)
-    );
+fn worker_ratio(worker: &WorkerSnap, global_tick: u64) -> f64 {
+    if worker.idle {
+        return 0.0;
+    }
+    if let (Some(line), Some(total)) = (worker.line, worker.line_total) {
+        if total > 0 {
+            return (line as f64 / total as f64).clamp(0.0, 1.0);
+        }
+    }
+    // Indeterminate pulse while waiting on Ollama / early lines.
+    let t = (worker.slot_tick as u64 + global_tick) % 24;
+    let phase = (t as f64 / 24.0) * std::f64::consts::TAU;
+    0.18 + 0.72 * (0.5 + 0.5 * phase.sin())
+}
+
+const WORKER_PALETTE: [(Color, &str, &str); 8] = [
+    (Color::Cyan, "🟦", "⬛"),
+    (Color::Green, "🟩", "⬛"),
+    (Color::Yellow, "🟨", "⬛"),
+    (Color::Magenta, "🟪", "⬛"),
+    (Color::LightBlue, "💙", "⬛"),
+    (Color::LightRed, "🟥", "⬛"),
+    (Color::LightGreen, "💚", "⬛"),
+    (Color::LightMagenta, "🩷", "⬛"),
+];
+
+fn worker_style(index: usize) -> (Color, &'static str, &'static str) {
+    WORKER_PALETTE[index % WORKER_PALETTE.len()]
+}
+
+fn worker_box_height() -> u16 {
+    4 // title border + bar line + timing line + bottom border
+}
+
+fn draw_overall(frame: &mut Frame, app: &App, area: Rect) {
+    let ratio = (app.completed as f64 / app.total as f64).clamp(0.0, 1.0);
+    let bar_width = area.width.saturating_sub(4).min(28).max(8) as usize;
+    let bar = emoji_bar(ratio, bar_width, "🟩", "⬜");
     let title = format!(
-        "☁️  📊 {}  {}/{} ({:.0}%)",
+        "☁️  Yankovinator · {} · {}/{} ({:.0}%)",
         app.label,
         app.completed,
         app.total,
-        overall_ratio * 100.0
+        ratio * 100.0
     );
-    let gauge = Gauge::default()
+    let timing = format!(
+        "⏱ {}   ⌛ {}",
+        format_duration(app.batch_spent_secs),
+        format_eta(app.batch_eta_secs)
+    );
+    let status = if app.status.is_empty() {
+        timing
+    } else {
+        format!("💬 {} · {}", truncate(&app.status, 48), timing)
+    };
+    let body = Paragraph::new(vec![
+        Line::from(Span::styled(
+            format!("{bar}  {:.0}%", ratio * 100.0),
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(status, Style::default().fg(Color::Yellow))),
+    ])
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(Span::styled(
+                title,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+    );
+    frame.render_widget(body, area);
+}
+
+fn draw_messages(frame: &mut Frame, app: &App, area: Rect) {
+    let lines: Vec<Line> = app
+        .messages
+        .iter()
+        .rev()
+        .take(3)
+        .enumerate()
+        .map(|(i, msg)| {
+            let prefix = if i == 0 { "💬 " } else { "   ↳ " };
+            Line::from(vec![
+                Span::styled(prefix, Style::default().fg(Color::Magenta)),
+                Span::styled(truncate(msg, 100), Style::default().fg(Color::White)),
+            ])
+        })
+        .collect();
+    let body = if lines.is_empty() {
+        Paragraph::new(Line::from(Span::styled(
+            "🧵 Waiting for worker updates…",
+            Style::default().fg(Color::DarkGray),
+        )))
+    } else {
+        Paragraph::new(lines).wrap(Wrap { trim: true })
+    }
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Magenta))
+            .title(Span::styled(" Feed ", Style::default().fg(Color::Magenta))),
+    );
+    frame.render_widget(body, area);
+}
+
+fn draw_worker_box(frame: &mut Frame, app: &App, index: usize, worker: &WorkerSnap, area: Rect) {
+    let (color, fill, empty) = worker_style(index);
+    let ratio = worker_ratio(worker, app.tick);
+    let bar_cells = area.width.saturating_sub(4).min(18).max(6) as usize;
+    let bar = emoji_bar(ratio, bar_cells, fill, empty);
+
+    let (state_emoji, state_text, border_color) = if worker.idle {
+        ("💤", "idle".to_string(), Color::DarkGray)
+    } else {
+        let mut text = format!("#{}", worker.job_number);
+        if let (Some(l), Some(n)) = (worker.line, worker.line_total) {
+            if n > 0 {
+                text.push_str(&format!(" · L{l}/{n}"));
+            }
+        } else {
+            text.push_str(" · running");
+        }
+        ("⚡", text, color)
+    };
+
+    let title = format!(" 🧵 W{:02} {state_emoji} {state_text} ", index + 1);
+    let timing = format!(
+        "⏱ {}   ⌛ {}",
+        format_duration(worker.spent_secs),
+        format_eta(worker.eta_secs)
+    );
+    let pct = format!("{:.0}%", ratio * 100.0);
+
+    let body = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled(
+                bar,
+                Style::default().fg(border_color).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled(pct, Style::default().fg(Color::White)),
+        ]),
+        Line::from(Span::styled(timing, Style::default().fg(Color::Gray))),
+    ])
+    .alignment(Alignment::Left)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(border_color))
+            .title(Span::styled(
+                title,
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            )),
+    );
+    frame.render_widget(body, area);
+}
+
+fn worker_grid(area: Rect, count: usize) -> Vec<Rect> {
+    if count == 0 {
+        return Vec::new();
+    }
+    let box_h = worker_box_height();
+    let cols = if area.width >= 88 && count >= 2 {
+        2
+    } else {
+        1
+    };
+    let rows = count.div_ceil(cols);
+    let mut out = Vec::with_capacity(count);
+
+    let row_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(vec![Constraint::Length(box_h); rows])
+        .split(area);
+
+    for (r, row_area) in row_layout.iter().enumerate() {
+        if cols == 1 {
+            let idx = r;
+            if idx < count {
+                out.push(*row_area);
+            }
+        } else {
+            let col_areas = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(*row_area);
+            for (c, cell) in col_areas.iter().enumerate() {
+                let idx = r * cols + c;
+                if idx < count {
+                    // Tiny gutter between columns
+                    let mut cell = *cell;
+                    if c == 0 && cell.width > 1 {
+                        cell.width = cell.width.saturating_sub(1);
+                    } else if c == 1 && cell.x < u16::MAX {
+                        cell.x = cell.x.saturating_add(1);
+                        cell.width = cell.width.saturating_sub(1);
+                    }
+                    out.push(cell);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn draw(frame: &mut Frame, app: &App) {
+    let root = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4), // overall box
+            Constraint::Length(5), // message feed box
+            Constraint::Min(worker_box_height()),
+            Constraint::Length(1), // footer
+        ])
+        .split(frame.area());
+
+    draw_overall(frame, app, root[0]);
+    draw_messages(frame, app, root[1]);
+
+    let worker_area = root[2];
+    if app.workers.is_empty() {
+        let hint = Paragraph::new(Line::from(Span::styled(
+            "🧵 Spinning up threaded workers…",
+            Style::default().fg(Color::Magenta),
+        )))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan))
-                .title(title),
-        )
-        .gauge_style(Style::default().fg(Color::Green).bg(Color::DarkGray))
-        .ratio(overall_ratio.min(1.0))
-        .label(Span::styled(
-            if app.status.is_empty() {
-                batch_timing.clone()
-            } else {
-                format!("💬 {} · {}", app.status, batch_timing)
-            },
-            Style::default().fg(Color::Yellow),
-        ));
-    frame.render_widget(gauge, chunks[0]);
-
-    let msg_count = app.messages.len().min(2);
-    let worker_count = app.workers.len();
-    let row_count = msg_count + worker_count;
-    if row_count == 0 {
-        let hint = Paragraph::new(Line::from(Span::styled(
-            "🧵 Waiting for worker updates…",
-            Style::default().fg(Color::Magenta),
-        )));
-        frame.render_widget(hint, chunks[1]);
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(" Workers "),
+        );
+        frame.render_widget(hint, worker_area);
     } else {
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Length(1); row_count])
-            .split(chunks[1]);
-
-        let mut row_idx = 0;
-        for msg in app.messages.iter().rev().take(2) {
-            let prefix = if row_idx == 0 { "💬 " } else { "   ↳ " };
-            let line = Line::from(vec![
-                Span::styled(prefix, Style::default().fg(Color::Magenta)),
-                Span::styled(truncate(msg, 96), Style::default().fg(Color::White)),
-            ]);
-            frame.render_widget(Paragraph::new(line), rows[row_idx]);
-            row_idx += 1;
-        }
-
-        for (wid, worker) in app.workers.iter().enumerate() {
-            let id = format!("W{:02}", wid + 1);
-            let (label, ratio, color) = if worker.idle {
-                ("💤 idle".to_string(), 0.0, Color::DarkGray)
+        // Visible window of workers if terminal is short
+        let max_visible = {
+            let h = worker_area.height as usize;
+            let box_h = worker_box_height() as usize;
+            let cols = if worker_area.width >= 88 && app.workers.len() >= 2 {
+                2
             } else {
-                let mut state = format!("⚡ #{}", worker.job_number);
-                if let (Some(l), Some(n)) = (worker.line, worker.line_total) {
-                    if n > 0 {
-                        state.push_str(&format!(" L{l}/{n}"));
-                    }
-                }
-                (
-                    state,
-                    indeterminate_ratio(worker.slot_tick, app.tick),
-                    Color::Yellow,
-                )
+                1
             };
-            let timing = format!(
-                "⏱ {}  ⌛ {}",
-                format_duration(worker.spent_secs),
-                format_eta(worker.eta_secs)
-            );
-            let gauge = Gauge::default()
-                .gauge_style(Style::default().fg(color).bg(Color::DarkGray))
-                .ratio(ratio.min(1.0))
-                .label(Span::styled(
-                    format!("{id} {label}  {timing}"),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ));
-            frame.render_widget(gauge, rows[row_idx]);
-            row_idx += 1;
+            ((h / box_h.max(1)) * cols).max(1)
+        };
+        let start = if app.workers.len() > max_visible {
+            // Prefer showing busy workers first
+            let mut order: Vec<usize> = (0..app.workers.len()).collect();
+            order.sort_by_key(|&i| app.workers[i].idle);
+            order.truncate(max_visible);
+            order
+        } else {
+            (0..app.workers.len()).collect()
+        };
+
+        let cells = worker_grid(worker_area, start.len());
+        for (slot, &wid) in start.iter().enumerate() {
+            if let Some(area) = cells.get(slot) {
+                draw_worker_box(frame, app, wid, &app.workers[wid], *area);
+            }
         }
     }
 
-    let footer = Line::from(Span::styled(
-        "╰─ yankovinator-tui · UTF-8 · resume: .yankovinator/",
+    let footer = Paragraph::new(Line::from(Span::styled(
+        "╰─ yankovinator-tui · color boxes · emoji bars · resume: .yankovinator/",
         Style::default().fg(Color::DarkGray),
-    ));
-    frame.render_widget(Paragraph::new(footer), chunks[2]);
+    )));
+    frame.render_widget(footer, root[3]);
 }
 
 fn stdin_reader(tx: mpsc::Sender<EventMsg>) {

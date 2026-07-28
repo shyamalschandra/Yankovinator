@@ -28,7 +28,7 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 - Word-by-word **part-of-speech** matching and **OED**-filtered substitutions (v1.04.9+)
 - **ParodyFitScorer** global ranking; optional **`--fit-optimize`** batch hill-climbing
 - Parallel workers for batch jobs (`--workers` up to **128** / `--jobs`) with a **producer–consumer queue** (up to **128** concurrent consumers; optional **`--consumers`** cap)
-- Batch **TUI progress** on stderr: **Rust `yankovinator-tui`** (ratatui/crossterm, UTF-8 emoji/color) when installed beside `yankovinator`; Swift ANSI fallback otherwise (`--no-progress` for plain logs; `YANKOVINATOR_RUST_TUI=0` to force fallback)
+- Batch **TUI progress** on stderr: **Rust `yankovinator-tui`** (ratatui/crossterm) with **color boxes + emoji progress bars per worker thread**; Swift ANSI fallback otherwise (`--no-progress` for plain logs; `YANKOVINATOR_RUST_TUI=0` to force fallback)
 - Batch-only **`yankovinator` CLI**: required `--input-dir`, `--themes-dir`, `--output-dir` (no single-file lyrics arg or `--keywords`)
 - Combinatorial batch: every song × every theme via `--input-dir` + `--themes-dir`
 - Multi-candidate ranking: `--candidates` up to **64** generates and scores variants per song×theme
@@ -49,11 +49,11 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.8**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.9**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.8/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.9/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator yankovinator-tui keyword-generator /usr/local/bin/
@@ -72,7 +72,7 @@ See [docs/RELEASES.md](docs/RELEASES.md) for architecture-specific downloads and
 brew tap shyamalschandra/yankovinator
 brew install yankovinator
 
-yankovinator --version          # → 1.06.8+
+yankovinator --version          # → 1.06.9+
 yankovinator --help
 keyword-generator --help
 ```
@@ -189,7 +189,7 @@ swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./
 
 **Stop and resume:** Each finished song×theme×candidate is appended to `out/.yankovinator/` (JSONL log + candidate files). Re-run the same command after Ctrl+C to skip completed work. Use `--fresh-batch` to wipe the checkpoint and start over. If you change songs, themes, `--candidates`, or `--model`, the fingerprint will not match—use `--fresh-batch` or a new `--output-dir`.
 
-**Batch TUI (fix garbled Unicode / segfaults):** Release tarballs include **`yankovinator-tui`** (Rust + ratatui). Install it **next to** `yankovinator` (same directory). The CLI auto-spawns it for multi-worker runs. From source: `cd tui && cargo build --release` (binary at `tui/target/release/yankovinator-tui`). Override path with `YANKOVINATOR_TUI_PATH`; disable with `YANKOVINATOR_RUST_TUI=0`. Use `--no-progress` for plain logs only.
+**Batch TUI (fix garbled Unicode / segfaults):** Release tarballs include **`yankovinator-tui`** (Rust + ratatui): ncurses-like **color boxes** and **emoji progress bars** for each threaded worker, plus an overall batch gauge and status feed. Install it **next to** `yankovinator` (same directory). The CLI auto-spawns it for multi-worker runs. From source: `cd tui && cargo build --release` (binary at `tui/target/release/yankovinator-tui`). Override path with `YANKOVINATOR_TUI_PATH`; disable with `YANKOVINATOR_RUST_TUI=0`. Use `--no-progress` for plain logs only.
 
 **Cloud Ollama (10 workers):**
 
@@ -349,7 +349,8 @@ See [docs/CERTIFICATION.md](docs/CERTIFICATION.md). Latest run summary: [docs/ce
 | Resource | Description |
 |---|---|
 | [QUICK_START.md](QUICK_START.md) | Fast path from clone to first parody |
-| [RELEASE_NOTES_v1.06.8.md](RELEASE_NOTES_v1.06.8.md) | Latest (expanded certification battery + docs/Pages) |
+| [RELEASE_NOTES_v1.06.9.md](RELEASE_NOTES_v1.06.9.md) | Latest (TUI color boxes + emoji bars per worker) |
+| [RELEASE_NOTES_v1.06.8.md](RELEASE_NOTES_v1.06.8.md) | Expanded certification battery + docs/Pages |
 | [RELEASE_NOTES_v1.06.7.md](RELEASE_NOTES_v1.06.7.md) | Fit-optimize parallel NL segfault fix |
 | [RELEASE_NOTES_v1.06.6.md](RELEASE_NOTES_v1.06.6.md) | PATH TUI resolve + no Swift multiline segfault |
 | [RELEASE_NOTES_v1.06.5.md](RELEASE_NOTES_v1.06.5.md) | Prior (MIDI prewarm / resume / Rust TUI) |

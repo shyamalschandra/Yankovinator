@@ -1,8 +1,8 @@
 [package]
 name = "yankovinator-tui"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Fixed-screen batch progress TUI for yankovinator (UTF-8, color, emoji)"
+description = "Ncurses-like batch progress TUI: color boxes + emoji bars per worker thread"
 
 [dependencies]
 crossterm = "0.28"
