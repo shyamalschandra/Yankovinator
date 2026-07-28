@@ -34,7 +34,7 @@ mkdir -p "${TAP_DIR}/Formula"
 cp "${SCRIPT_DIR}/Formula/yankovinator.rb" "${TAP_DIR}/Formula/yankovinator.rb"
 cp "${SCRIPT_DIR}/Formula/yankovinator.rb" "${TAP_DIR}/yankovinator.rb"
 
-# Keep tap formula URL/sha synced to the requested release.
+# Keep tap formula URL/sha/version synced to the requested release.
 python3 - <<PY
 from pathlib import Path
 import re
@@ -47,6 +47,13 @@ text = re.sub(
     count=1,
 )
 text = re.sub(r'sha256 "[^"]+"', f'sha256 "${SHA256}"', text, count=1)
+text = re.sub(r'version "[^"]+"', f'version "${VERSION}"', text, count=1)
+text = re.sub(
+    r'assert_equal "[^"]+", shell_output\("#\{bin\}/yankovinator --version"\)\.strip',
+    f'assert_equal "${VERSION}", shell_output("#{{bin}}/yankovinator --version").strip',
+    text,
+    count=1,
+)
 path.write_text(text)
 Path("${TAP_DIR}/yankovinator.rb").write_text(text)
 PY
