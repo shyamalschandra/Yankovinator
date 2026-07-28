@@ -49,11 +49,11 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.11**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.12**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.11/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.12/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator yankovinator-tui keyword-generator /usr/local/bin/
@@ -72,7 +72,7 @@ See [docs/RELEASES.md](docs/RELEASES.md) for architecture-specific downloads and
 brew tap shyamalschandra/yankovinator
 brew install yankovinator
 
-yankovinator --version          # → 1.06.11+
+yankovinator --version          # → 1.06.12+
 yankovinator --help
 keyword-generator --help
 ```
@@ -187,7 +187,7 @@ swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./
 # If songs×themes×candidates > 100, add --force
 ```
 
-**Stop and resume:** Each finished song×theme×candidate is appended to `out/.yankovinator/` (JSONL log + candidate files). Re-run the same command after Ctrl+C to skip completed work. Use `--fresh-batch` to wipe the checkpoint and start over. If you change songs, themes, `--candidates`, or `--model`, the fingerprint will not match—use `--fresh-batch` or a new `--output-dir`.
+**Stop and resume:** Each finished song×theme×candidate is **paged to disk** under `out/.yankovinator/` as it completes (append-only JSONL log + candidate files, fsynced). Re-run the same command after Ctrl+C to skip completed work — resume loads the completion/score index from JSONL and **lazy-loads** candidate text only when ranking or exporting winners (bounded LRU; not an all-or-nothing in-memory cache). Use `--fresh-batch` to wipe the checkpoint and start over. If you change songs, themes, `--candidates`, or `--model`, the fingerprint will not match—use `--fresh-batch` or a new `--output-dir`.
 
 **Batch TUI (fix garbled Unicode / segfaults):** Release tarballs include **`yankovinator-tui`** (Rust + ratatui): ncurses-like **color boxes** and **emoji progress bars** for each threaded worker, plus an overall batch gauge and status feed. Install it **next to** `yankovinator` (same directory). The CLI auto-spawns it for multi-worker runs. From source: `cd tui && cargo build --release` (binary at `tui/target/release/yankovinator-tui`). Override path with `YANKOVINATOR_TUI_PATH`; disable with `YANKOVINATOR_RUST_TUI=0`. Use `--no-progress` for plain logs only.
 
@@ -353,7 +353,7 @@ See [docs/CERTIFICATION.md](docs/CERTIFICATION.md). Latest run summary: [docs/ce
 | Resource | Description |
 |---|---|
 | [QUICK_START.md](QUICK_START.md) | Fast path from clone to first parody |
-| [RELEASE_NOTES_v1.06.11.md](RELEASE_NOTES_v1.06.11.md) | Latest (cloud 429/502 retries + consumer cap) |
+| [RELEASE_NOTES_v1.06.12.md](RELEASE_NOTES_v1.06.12.md) | Latest (disk-paged batch checkpoints) |
 | [RELEASE_NOTES_v1.06.10.md](RELEASE_NOTES_v1.06.10.md) | Per-worker elapsed/remain on progress bars |
 | [RELEASE_NOTES_v1.06.9.md](RELEASE_NOTES_v1.06.9.md) | TUI color boxes + emoji bars per worker |
 | [RELEASE_NOTES_v1.06.8.md](RELEASE_NOTES_v1.06.8.md) | Expanded certification battery + docs/Pages |

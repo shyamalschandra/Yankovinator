@@ -10,6 +10,14 @@ public actor BatchOutputCheckpoint {
 
     public init() {}
 
+    /// Restore best-known scores from the resume index without loading candidate text.
+    public func seedScore(jobID: String, score: Double) {
+        let prior = bestScoreByJobID[jobID] ?? -.infinity
+        if score > prior {
+            bestScoreByJobID[jobID] = score
+        }
+    }
+
     @discardableResult
     public func consider(
         job: ParodyBatchJob,

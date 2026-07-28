@@ -7,9 +7,9 @@
 class Yankovinator < Formula
   desc "Convert songs into parodies with theme-based constraints using Ollama"
   homepage "https://github.com/shyamalschandra/Yankovinator"
-  url "https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.11/yankovinator-universal.tar.gz"
-  sha256 "0172e4f398016108ef52acfdc3ee2481cfd5a5af5e5990b9bca641f8402b92a2"
-  version "1.06.11"
+  url "https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.12/yankovinator-universal.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  version "1.06.12"
   license :cannot_represent
 
   depends_on macos: :ventura
@@ -38,7 +38,7 @@ class Yankovinator < Formula
         yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \\
           --workers 10 --candidates 10 --keep-candidates --force
 
-      Resume after Ctrl+C: re-run the same command (checkpoint in --output-dir/.yankovinator).
+      Resume after Ctrl+C: re-run the same command (disk-paged checkpoint in --output-dir/.yankovinator).
       Reset checkpoint: add --fresh-batch.
 
       Interactive progress: yankovinator-tui is installed beside yankovinator (Rust/ratatui).
@@ -50,7 +50,7 @@ class Yankovinator < Formula
   end
 
   test do
-    assert_equal "1.06.11", shell_output("#{bin}/yankovinator --version").strip
+    assert_equal "1.06.12", shell_output("#{bin}/yankovinator --version").strip
     assert_match "USAGE", shell_output("#{bin}/yankovinator --help")
     assert_match "fresh-batch", shell_output("#{bin}/yankovinator --help")
     assert_match "USAGE", shell_output("#{bin}/keyword-generator --help")

@@ -21,9 +21,9 @@ struct YankovinatorCLI: AsyncParsableCommand {
           # Outputs best: out/<theme>/<song>.parody.txt
           # Optional: --keep-candidates writes ranked variants
           # If songs×themes×candidates > 100, add --force
-          # Stop/restart: progress is checkpointed under --output-dir/.yankovinator (use --fresh-batch to reset)
+          # Stop/restart: disk-paged checkpoints under --output-dir/.yankovinator (use --fresh-batch to reset)
         """,
-        version: "1.06.11"
+        version: "1.06.12"
     )
 
     @Option(name: [.long, .customShort("u")], help: "Ollama API base URL (local or cloud)")
@@ -299,11 +299,6 @@ struct YankovinatorCLI: AsyncParsableCommand {
         let candidateIndex: Int
     }
 
-    private struct ScoredExpansion: Sendable {
-        let job: ParodyBatchJob
-        let result: ParodyCandidateResult
-    }
-
     private func runJobs(
         _ jobs: [ParodyBatchJob],
         outputRoot: String,
@@ -359,19 +354,18 @@ struct YankovinatorCLI: AsyncParsableCommand {
             throw ValidationError("Batch checkpoint error: \(error)")
         }
 
-        var scoredPreloaded: [ScoredExpansion] = []
+        // Resume skips completed units via the on-disk key index only — do not page
+        // every candidate text into RAM up front (ranking loads winners lazily later).
         var pendingExpanded: [ExpandedCandidateJob] = []
         pendingExpanded.reserveCapacity(expanded.count)
         for item in expanded {
-            if await resumeStore.isComplete(jobID: item.job.id, candidateIndex: item.candidateIndex),
-               let restored = await resumeStore.restoredResult(jobID: item.job.id, candidateIndex: item.candidateIndex) {
-                scoredPreloaded.append(ScoredExpansion(job: item.job, result: restored))
-            } else {
-                pendingExpanded.append(item)
+            if await resumeStore.isComplete(jobID: item.job.id, candidateIndex: item.candidateIndex) {
+                continue
             }
+            pendingExpanded.append(item)
         }
 
-        let restoredCount = scoredPreloaded.count
+        let restoredCount = await resumeStore.restoredCount
         let pendingGenerations = pendingExpanded.count
 
         var lyricsByPath: [String: [String]] = [:]
@@ -467,11 +461,17 @@ struct YankovinatorCLI: AsyncParsableCommand {
         let batchRefinementPasses = 0
         let enableCoherenceRegeneration = false
         let checkpoint = BatchOutputCheckpoint()
-        let scoredNew: [ScoredExpansion]
+        // Seed best-known scores from the JSONL index (no candidate text I/O).
+        for job in jobs {
+            let summaries = await resumeStore.candidateSummaries(jobID: job.id)
+            if let bestScore = summaries.map(\.score).max() {
+                await checkpoint.seedScore(jobID: job.id, score: bestScore)
+            }
+        }
         if pendingExpanded.isEmpty {
-            scoredNew = []
+            // Nothing new to generate — fall through to final ranking from disk.
         } else {
-            scoredNew = try await ParallelJobRunner.map(
+            _ = try await ParallelJobRunner.map(
             items: pendingExpanded,
             workers: rx.effectiveWorkers,
             showProgress: showProgress,
@@ -587,31 +587,40 @@ struct YankovinatorCLI: AsyncParsableCommand {
                 }
             }
 
-            return ScoredExpansion(job: item.job, result: result)
+            return
         }
         }
 
-        let scored = scoredPreloaded + scoredNew
+        try await resumeStore.flushManifest()
 
-        // Group by job id, pick best candidate, write outputs.
-        var byJob: [String: [ScoredExpansion]] = [:]
-        for item in scored {
-            byJob[item.job.id, default: []].append(item)
-        }
-
+        // Rank from on-disk JSONL scores; page in only the winning candidate text
+        // (and file-copy the rest when --keep-candidates).
         var outcomes: [(id: String, outputPath: String, score: Double)] = []
         for job in jobs {
-            guard let group = byJob[job.id], !group.isEmpty else { continue }
-            let ranked = group.map(\.result).sorted { lhs, rhs in
+            let summaries = await resumeStore.candidateSummaries(jobID: job.id)
+            guard !summaries.isEmpty else { continue }
+            let ranked = summaries.sorted { lhs, rhs in
                 if lhs.score != rhs.score { return lhs.score > rhs.score }
-                return lhs.index < rhs.index
+                return lhs.candidateIndex < rhs.candidateIndex
             }
-            guard let best = ranked.first else { continue }
+            guard let top = ranked.first else { continue }
+
+            let best: ParodyCandidateResult
+            if keepCandidates && candidates > 1 {
+                guard let exported = try await resumeStore.exportCandidateBundle(
+                    jobID: job.id,
+                    outputPath: job.outputPath
+                ) else { continue }
+                best = exported
+            } else {
+                guard let loaded = try await resumeStore.loadResult(
+                    jobID: job.id,
+                    candidateIndex: top.candidateIndex
+                ) else { continue }
+                best = loaded
+            }
 
             try best.text.write(toFile: job.outputPath, atomically: true, encoding: .utf8)
-            if keepCandidates && candidates > 1 {
-                try Self.writeCandidateBundle(best: best, all: ranked, outputPath: job.outputPath)
-            }
             if verbose {
                 await log.printLine("[\(job.id)] best=c\(best.index) score=\(String(format: "%.3f", best.score)) → \(job.outputPath)")
             }
@@ -625,33 +634,6 @@ struct YankovinatorCLI: AsyncParsableCommand {
         if outcomes.count > 50 {
             print("  … and \(outcomes.count - 50) more")
         }
-    }
-
-    private static func writeCandidateBundle(
-        best: ParodyCandidateResult,
-        all: [ParodyCandidateResult],
-        outputPath: String
-    ) throws {
-        let fm = FileManager.default
-        let parent = (outputPath as NSString).deletingLastPathComponent
-        let stem = ((outputPath as NSString).lastPathComponent as NSString).deletingPathExtension
-            .replacingOccurrences(of: ".parody", with: "")
-        let dir = (parent as NSString).appendingPathComponent("\(stem).candidates")
-        try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
-
-        var scoreLines: [String] = ["# ranked candidates (best first)", "best: c\(String(format: "%02d", best.index)) score=\(String(format: "%.6f", best.score))"]
-        for item in all {
-            let name = String(format: "c%02d.parody.txt", item.index)
-            let path = (dir as NSString).appendingPathComponent(name)
-            try item.text.write(toFile: path, atomically: true, encoding: .utf8)
-            let marker = item.index == best.index ? "BEST" : "    "
-            scoreLines.append("\(marker) \(name) score=\(String(format: "%.6f", item.score))")
-        }
-        try scoreLines.joined(separator: "\n").write(
-            toFile: (dir as NSString).appendingPathComponent("scores.txt"),
-            atomically: true,
-            encoding: .utf8
-        )
     }
 
     // MARK: - Shared helpers
