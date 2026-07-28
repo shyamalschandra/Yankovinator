@@ -10,7 +10,7 @@ final class ParallelJobRunnerTests: XCTestCase {
         XCTAssertEqual(ParallelJobRunner.clampWorkers(0), 1)
         XCTAssertEqual(ParallelJobRunner.clampWorkers(-3), 1)
         XCTAssertEqual(ParallelJobRunner.clampWorkers(10), 10)
-        XCTAssertEqual(ParallelJobRunner.clampWorkers(100), 100)
+        XCTAssertEqual(ParallelJobRunner.clampWorkers(100), ParallelJobRunner.maxWorkers)
         XCTAssertEqual(ParallelJobRunner.clampWorkers(200), ParallelJobRunner.maxWorkers)
     }
 
@@ -62,21 +62,25 @@ final class ParallelJobRunnerTests: XCTestCase {
         XCTAssertGreaterThan(peak, 1)
     }
 
-    func testRecommendedCloudWorkersIsTen() {
+    func testRecommendedCloudWorkersAndLicenseCap() {
         XCTAssertEqual(ParallelJobRunner.recommendedCloudWorkers, 4)
-        XCTAssertEqual(ParallelJobRunner.maxConcurrentConsumers, 128)
+        XCTAssertEqual(ParallelJobRunner.maxWorkers, 10)
+        XCTAssertEqual(ParallelJobRunner.maxConcurrentConsumers, 10)
+        XCTAssertEqual(ParallelJobRunner.licenseMaxConcurrentConsumers, 10)
     }
 
     func testConsumerPoolSizeCapsAtTen() {
         XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 1), 1)
         XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 10), 10)
-        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 128), 128)
-        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 200), 128)
+        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 128), 10)
+        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 200), 10)
     }
 
     func testConsumerPoolRespectsOllamaNumParallel() {
         XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 10, ollamaNumParallel: 4), 4)
         XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 3, ollamaNumParallel: 10), 3)
+        // Server parallel above license max cannot raise consumers above 10
+        XCTAssertEqual(ParallelJobRunner.consumerPoolSize(requestedWorkers: 10, ollamaNumParallel: 64), 10)
     }
 
     func testMapNeverExceedsTenConcurrentConsumers() async throws {
@@ -105,6 +109,7 @@ final class ParallelJobRunnerTests: XCTestCase {
 
         let peak = await counter.peakValue()
         XCTAssertLessThanOrEqual(peak, ParallelJobRunner.maxConcurrentConsumers)
+        XCTAssertLessThanOrEqual(peak, ParallelJobRunner.licenseMaxConcurrentConsumers)
         XCTAssertGreaterThan(peak, 1)
     }
 

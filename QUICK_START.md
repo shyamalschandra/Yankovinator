@@ -92,7 +92,7 @@ swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./
   --verbose
 ```
 
-Cloud runs retry **429/502** with backoff and default-cap consumers at **4**. Higher `--workers` needs `--no-cloud-prescription` (risk of rate limits).
+Cloud runs retry **429/502** with backoff and default-cap consumers at **4**. Higher `--workers` needs `--no-cloud-prescription` (risk of rate limits; absolute license max **10** concurrent).
 
 ### Combinatorial batch (songs × themes × 10 candidates)
 
@@ -106,7 +106,7 @@ swift run yankovinator --input-dir ./songs --themes-dir ./themes \
   --output-dir ./out --workers 10 --candidates 10 --keep-candidates --verbose
 ```
 
-Best outputs land at `out/<theme>/<song>.parody.txt`. Effective generations = `songs × themes × candidates`. Above 100, pass `--force`. Local runs align consumers with **`OLLAMA_NUM_PARALLEL`** ([FAQ](https://docs.ollama.com/faq)); `:cloud` models default to ≤**4** concurrent consumers.
+Best outputs land at `out/<theme>/<song>.parody.txt`. Effective generations = `songs × themes × candidates`. Above 100, pass `--force`. Local runs align consumers with **`OLLAMA_NUM_PARALLEL`** ([FAQ](https://docs.ollama.com/faq)); `:cloud` models default to ≤**4** concurrent consumers; all modes are hard-capped at **10** concurrent (license).
 
 ### Certification battery (releases)
 

@@ -23,7 +23,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
           # If songs×themes×candidates > 100, add --force
           # Stop/restart: disk-paged checkpoints under --output-dir/.yankovinator (use --fresh-batch to reset)
         """,
-        version: "1.06.12"
+        version: "1.06.13"
     )
 
     @Option(name: [.long, .customShort("u")], help: "Ollama API base URL (local or cloud)")
@@ -37,7 +37,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
 
     @Option(
         name: [.long, .customLong("ollama-num-workers")],
-        help: "Ollama server OLLAMA_NUM_PARALLEL (docs.ollama.com/faq). Default: env OLLAMA_NUM_PARALLEL on localhost; caps consumers. Alias: --ollama-num-workers."
+        help: "Ollama server OLLAMA_NUM_PARALLEL (docs.ollama.com/faq). Default: env OLLAMA_NUM_PARALLEL on localhost; caps consumers (license max \(ParallelJobRunner.licenseMaxConcurrentConsumers)). Alias: --ollama-num-workers."
     )
     var ollamaNumParallel: Int?
 
@@ -52,13 +52,13 @@ struct YankovinatorCLI: AsyncParsableCommand {
 
     @Option(
         name: [.customLong("workers"), .customLong("jobs")],
-        help: "Parallel Ollama worker count (1-\(ParallelJobRunner.maxWorkers); default 1). Match OLLAMA_NUM_PARALLEL on the server."
+        help: "Parallel Ollama worker count (1-\(ParallelJobRunner.maxWorkers); default 1; license max \(ParallelJobRunner.licenseMaxConcurrentConsumers) concurrent). Match OLLAMA_NUM_PARALLEL on the server."
     )
     var workers: Int = 1
 
     @Option(
         name: .long,
-        help: "Cap in-flight consumer tasks (defaults to --workers; 1-\(ParallelJobRunner.maxConcurrentConsumers))"
+        help: "Cap in-flight consumer tasks (defaults to --workers; 1-\(ParallelJobRunner.maxConcurrentConsumers); license max \(ParallelJobRunner.licenseMaxConcurrentConsumers))"
     )
     var consumers: Int?
 
@@ -151,17 +151,43 @@ struct YankovinatorCLI: AsyncParsableCommand {
             throw ValidationError(error.description)
         }
 
-        do {
-            try ParallelJobRunner.validateWorkers(workers)
-        } catch let error as ParallelJobError {
-            throw ValidationError(error.description)
+        if workers < 1 {
+            throw ValidationError(
+                ParallelJobError.invalidWorkerCount(workers, max: ParallelJobRunner.maxWorkers).description
+            )
+        }
+        if workers > ParallelJobRunner.maxWorkers {
+            fputs(
+                """
+                ⚠️  License terms limit concurrent Ollama/generation consumers to \
+                \(ParallelJobRunner.licenseMaxConcurrentConsumers). \
+                Capping --workers \(workers)→\(ParallelJobRunner.maxWorkers).
+
+                """,
+                stderr
+            )
+            fflush(stderr)
+            workers = ParallelJobRunner.maxWorkers
         }
 
         if let consumers {
-            guard consumers >= 1, consumers <= ParallelJobRunner.maxConcurrentConsumers else {
+            guard consumers >= 1 else {
                 throw ValidationError(
                     "Consumers must be between 1 and \(ParallelJobRunner.maxConcurrentConsumers) (got \(consumers))."
                 )
+            }
+            if consumers > ParallelJobRunner.maxConcurrentConsumers {
+                fputs(
+                    """
+                    ⚠️  License terms limit concurrent Ollama/generation consumers to \
+                    \(ParallelJobRunner.licenseMaxConcurrentConsumers). \
+                    Capping --consumers \(consumers)→\(ParallelJobRunner.maxConcurrentConsumers).
+
+                    """,
+                    stderr
+                )
+                fflush(stderr)
+                self.consumers = ParallelJobRunner.maxConcurrentConsumers
             }
         }
 
@@ -171,8 +197,23 @@ struct YankovinatorCLI: AsyncParsableCommand {
             }
         }
 
-        if let parallel = ollamaNumParallel, parallel < 1 {
-            throw ValidationError("OLLAMA_NUM_PARALLEL must be at least 1 (got \(parallel)).")
+        if let parallel = ollamaNumParallel {
+            guard parallel >= 1 else {
+                throw ValidationError("OLLAMA_NUM_PARALLEL must be at least 1 (got \(parallel)).")
+            }
+            if parallel > ParallelJobRunner.maxConcurrentConsumers {
+                fputs(
+                    """
+                    ⚠️  License terms limit concurrent Ollama/generation consumers to \
+                    \(ParallelJobRunner.licenseMaxConcurrentConsumers). \
+                    Capping --ollama-num-parallel \(parallel)→\(ParallelJobRunner.maxConcurrentConsumers).
+
+                    """,
+                    stderr
+                )
+                fflush(stderr)
+                ollamaNumParallel = ParallelJobRunner.maxConcurrentConsumers
+            }
         }
 
         ollamaURL = ollamaURL.trimmingCharacters(in: .whitespacesAndNewlines)

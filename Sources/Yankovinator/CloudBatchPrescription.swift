@@ -73,11 +73,11 @@ public enum CloudBatchPrescription: Sendable {
         var messages: [String] = []
         if appliedCap {
             messages.append(
-                "Rx: Cap workers \(clamped)→\(capped) for :cloud rate limits (avoids 429 / port exhaustion). Use --no-cloud-prescription for \(clamped)."
+                "Rx: Cap workers \(clamped)→\(capped) for :cloud rate limits (avoids 429 / port exhaustion). Use --no-cloud-prescription for up to \(ParallelJobRunner.licenseMaxConcurrentConsumers) (license max)."
             )
         } else {
             messages.append(
-                "Rx: Cloud batch — keep --workers ≤\(cap) (or --consumers \(cap)) to stay under Ollama cloud rate limits."
+                "Rx: Cloud batch — keep --workers ≤\(cap) (or --consumers \(cap)) to stay under Ollama cloud rate limits (absolute license max: \(ParallelJobRunner.licenseMaxConcurrentConsumers))."
             )
         }
 

@@ -27,7 +27,7 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 - Local or cloud Ollama integration (`llama3.2:3b` by default; any `--ollama-url`)
 - Word-by-word **part-of-speech** matching and **OED**-filtered substitutions (v1.04.9+)
 - **ParodyFitScorer** global ranking; optional **`--fit-optimize`** batch hill-climbing
-- Parallel workers for batch jobs (`--workers` up to **128** / `--jobs`) with a **producer–consumer queue** (up to **128** concurrent consumers; optional **`--consumers`** cap)
+- Parallel workers for batch jobs (`--workers` up to **10** / `--jobs`) with a **producer–consumer queue** (license max **10** concurrent consumers; optional **`--consumers`** cap; `:cloud` soft default **4**)
 - Batch **TUI progress** on stderr: **Rust `yankovinator-tui`** (ratatui/crossterm) with **color boxes + emoji progress bars per worker thread**; Swift ANSI fallback otherwise (`--no-progress` for plain logs; `YANKOVINATOR_RUST_TUI=0` to force fallback)
 - Batch-only **`yankovinator` CLI**: required `--input-dir`, `--themes-dir`, `--output-dir` (no single-file lyrics arg or `--keywords`)
 - Combinatorial batch: every song × every theme via `--input-dir` + `--themes-dir`
@@ -49,11 +49,11 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.12**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.13**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.12/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.13/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator yankovinator-tui keyword-generator /usr/local/bin/
@@ -72,7 +72,7 @@ See [docs/RELEASES.md](docs/RELEASES.md) for architecture-specific downloads and
 brew tap shyamalschandra/yankovinator
 brew install yankovinator
 
-yankovinator --version          # → 1.06.12+
+yankovinator --version          # → 1.06.13+
 yankovinator --help
 keyword-generator --help
 ```
@@ -115,7 +115,7 @@ swift run keyword-generator <subject1> [subject2] ... [options]
 - `--ollama-url, -u <url>`: Ollama API base URL (local or cloud; default: `http://localhost:11434`)
 - `--model, -m <name>`: Ollama model (default: `llama3.2:3b`)
 - `--output, -o <file>`: Output path (default: stdout)
-- `--workers, --jobs <n>`: Max parallel subject jobs (1–**128**)
+- `--workers, --jobs <n>`: Max parallel subject jobs (1–**10**; license max)
 - `--verbose, -v`: Verbose output
 
 ```bash
@@ -151,9 +151,9 @@ swift run yankovinator --input-dir <songs-dir> --themes-dir <themes-dir> --outpu
 
 - `--ollama-url, -u <url>`: Ollama API base URL (local or cloud)
 - `--model, -m <name>`: Ollama model (default: `llama3.2:3b`)
-- `--workers, --jobs <n>`: Parallel worker count (1–**128**). Consumer pool = min(workers, 128, `OLLAMA_NUM_PARALLEL` on localhost) unless `--consumers` is set.
-- `--consumers <n>`: Cap in-flight consumer tasks (1–128; default follows `--workers`).
-- `--ollama-num-parallel <n>` (alias `--ollama-num-workers`): Ollama server `OLLAMA_NUM_PARALLEL` (or set env before `ollama serve`; see [Ollama FAQ](https://docs.ollama.com/faq)).
+- `--workers, --jobs <n>`: Parallel worker count (1–**10**; license max). Values above 10 are clamped with a stderr warning. Consumer pool = min(workers, 10, `OLLAMA_NUM_PARALLEL` on localhost) unless `--consumers` is set.
+- `--consumers <n>`: Cap in-flight consumer tasks (1–**10**; license max; default follows `--workers`). Values above 10 are clamped.
+- `--ollama-num-parallel <n>` (alias `--ollama-num-workers`): Ollama server `OLLAMA_NUM_PARALLEL` (or set env before `ollama serve`; see [Ollama FAQ](https://docs.ollama.com/faq)). Consumer effect is also capped at **10** (license).
 - `--candidates <n>`: Generate N ranked variants per song×theme (1–**64**)
 - `--fit-optimize`: Extra Ollama passes to hill-climb syllable/POS/coherence fit in batch (slower, higher scores)
 - `--keep-candidates`: Also write ranked variants under `<song>.candidates/`
@@ -200,22 +200,22 @@ yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
   --model gemma4:31b-cloud --workers 4 --candidates 20 --force --verbose
 ```
 
-Raising `--workers` / `--ollama-num-workers` above ~4 against cloud often triggers **429** or ephemeral-port exhaustion (`can't assign requested address`). Use **`--no-cloud-prescription`** only if you accept that risk. If a failed run left a bad checkpoint, add **`--fresh-batch`**.
+Raising `--workers` / `--ollama-num-workers` above ~4 against cloud often triggers **429** or ephemeral-port exhaustion (`can't assign requested address`). Use **`--no-cloud-prescription`** only if you accept that risk (still hard-capped at **10** by license terms). If a failed run left a bad checkpoint, add **`--fresh-batch`**.
 
 **Ollama server parallelism (local `ollama serve`):**
 
-Match [Ollama’s `OLLAMA_NUM_PARALLEL`](https://docs.ollama.com/faq) to your `--workers` / consumer pool (e.g. 10):
+Match [Ollama’s `OLLAMA_NUM_PARALLEL`](https://docs.ollama.com/faq) to your `--workers` / consumer pool (e.g. 10; license max):
 
 ```bash
 export OLLAMA_NUM_PARALLEL=10   # set before starting the server; restart required
 ollama serve
 ```
 
-The CLI reads `$OLLAMA_NUM_PARALLEL` on `localhost` or you can pass `--ollama-num-parallel 10`. Local (non-`:cloud`) models are not capped by cloud prescription.
+The CLI reads `$OLLAMA_NUM_PARALLEL` on `localhost` or you can pass `--ollama-num-parallel 10`. Local (non-`:cloud`) models are not capped by cloud prescription, but concurrent consumers never exceed **10** (license).
 
-**Heavy cloud batch (`qwen3.5:397b-cloud`, etc.):** stderr **prescription** caps parallel HTTP workers at **4**, may set **600s** timeout if unset, and uses batch fast path with checkpoints. Use **`--no-cloud-prescription`** for a higher `--workers` count (up to 128) at your own rate-limit risk.
+**Heavy cloud batch (`qwen3.5:397b-cloud`, etc.):** stderr **prescription** caps parallel HTTP workers at **4**, may set **600s** timeout if unset, and uses batch fast path with checkpoints. Use **`--no-cloud-prescription`** for a higher `--workers` count (up to the license max of **10**) at your own rate-limit risk.
 
-**Higher cloud concurrency (opt-in):**
+**Higher cloud concurrency (opt-in, ≤10):**
 
 ```bash
 yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
@@ -353,7 +353,8 @@ See [docs/CERTIFICATION.md](docs/CERTIFICATION.md). Latest run summary: [docs/ce
 | Resource | Description |
 |---|---|
 | [QUICK_START.md](QUICK_START.md) | Fast path from clone to first parody |
-| [RELEASE_NOTES_v1.06.12.md](RELEASE_NOTES_v1.06.12.md) | Latest (disk-paged batch checkpoints) |
+| [RELEASE_NOTES_v1.06.13.md](RELEASE_NOTES_v1.06.13.md) | Latest (license max 10 concurrent consumers) |
+| [RELEASE_NOTES_v1.06.12.md](RELEASE_NOTES_v1.06.12.md) | Disk-paged batch checkpoints |
 | [RELEASE_NOTES_v1.06.10.md](RELEASE_NOTES_v1.06.10.md) | Per-worker elapsed/remain on progress bars |
 | [RELEASE_NOTES_v1.06.9.md](RELEASE_NOTES_v1.06.9.md) | TUI color boxes + emoji bars per worker |
 | [RELEASE_NOTES_v1.06.8.md](RELEASE_NOTES_v1.06.8.md) | Expanded certification battery + docs/Pages |

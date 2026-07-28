@@ -40,7 +40,7 @@ final class CloudBatchPrescriptionTests: XCTestCase {
         XCTAssertTrue(heavy.skipLLMCoherenceInBatch)
     }
 
-    func testPlanDisabledLeavesWorkers() {
+    func testPlanDisabledLeavesWorkersWithinLicenseMax() {
         let plan = CloudBatchPrescription.plan(
             model: "gemma4:31b-cloud",
             requestedWorkers: 10,
@@ -49,6 +49,15 @@ final class CloudBatchPrescriptionTests: XCTestCase {
         )
         XCTAssertEqual(plan.effectiveWorkers, 10)
         XCTAssertFalse(plan.appliedWorkerCap)
+
+        let overLicense = CloudBatchPrescription.plan(
+            model: "gemma4:31b-cloud",
+            requestedWorkers: 20,
+            ollamaTimeout: nil,
+            enabled: false
+        )
+        XCTAssertEqual(overLicense.effectiveWorkers, ParallelJobRunner.licenseMaxConcurrentConsumers)
+        XCTAssertFalse(overLicense.appliedWorkerCap)
     }
 
     func testConsumerPoolSizeWithCloudModels() {
@@ -70,12 +79,25 @@ final class CloudBatchPrescriptionTests: XCTestCase {
         )
         XCTAssertEqual(
             ParallelJobRunner.consumerPoolSize(requestedWorkers: 80, consumerOverride: 48),
-            48
+            ParallelJobRunner.licenseMaxConcurrentConsumers
         )
-        // Local models stay uncapped by cloud prescription
+        // Even with --no-cloud-prescription, absolute license max is 10
+        XCTAssertEqual(
+            ParallelJobRunner.consumerPoolSize(
+                requestedWorkers: 80,
+                model: "gemma4:31b-cloud",
+                applyCloudPrescription: false
+            ),
+            ParallelJobRunner.licenseMaxConcurrentConsumers
+        )
+        // Local models stay uncapped by cloud prescription (still ≤ license max)
         XCTAssertEqual(
             ParallelJobRunner.consumerPoolSize(requestedWorkers: 10, model: "llama3.2:3b"),
             10
+        )
+        XCTAssertEqual(
+            ParallelJobRunner.consumerPoolSize(requestedWorkers: 80, model: "llama3.2:3b"),
+            ParallelJobRunner.licenseMaxConcurrentConsumers
         )
     }
 }

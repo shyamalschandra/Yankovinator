@@ -7,9 +7,9 @@
 class Yankovinator < Formula
   desc "Convert songs into parodies with theme-based constraints using Ollama"
   homepage "https://github.com/shyamalschandra/Yankovinator"
-  url "https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.12/yankovinator-universal.tar.gz"
-  sha256 "251adddc56932c46462abb3be6718329de031405cdc777f79c6cce276e2103f7"
-  version "1.06.12"
+  url "https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.13/yankovinator-universal.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  version "1.06.13"
   license :cannot_represent
 
   depends_on macos: :ventura
@@ -50,7 +50,7 @@ class Yankovinator < Formula
   end
 
   test do
-    assert_equal "1.06.12", shell_output("#{bin}/yankovinator --version").strip
+    assert_equal "1.06.13", shell_output("#{bin}/yankovinator --version").strip
     assert_match "USAGE", shell_output("#{bin}/yankovinator --help")
     assert_match "fresh-batch", shell_output("#{bin}/yankovinator --help")
     assert_match "USAGE", shell_output("#{bin}/keyword-generator --help")

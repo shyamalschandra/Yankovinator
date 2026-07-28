@@ -2,7 +2,7 @@
 
 Yankovinator publishes pre-built macOS binaries so you can install without a Swift toolchain.
 
-**Current release:** [v1.06.12](https://github.com/shyamalschandra/Yankovinator/releases/tag/v1.06.12)
+**Current release:** [v1.06.13](https://github.com/shyamalschandra/Yankovinator/releases/tag/v1.06.13)
 
 ## What each archive contains
 
@@ -24,7 +24,7 @@ Yankovinator publishes pre-built macOS binaries so you can install without a Swi
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.12/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.13/yankovinator-universal.tar.gz
 
 # Verify checksum (compare to the release .sha256 asset)
 shasum -a 256 yankovinator-universal.tar.gz
@@ -61,13 +61,13 @@ brew tap shyamalschandra/yankovinator
 brew install yankovinator
 # or upgrade:
 brew update && brew upgrade shyamalschandra/yankovinator/yankovinator
-yankovinator --version   # → 1.06.12+
+yankovinator --version   # → 1.06.13+
 ```
 
 After a new GitHub release, sync the tap from this repo:
 
 ```bash
-./update-homebrew-tap.sh 1.06.12
+./update-homebrew-tap.sh 1.06.13
 ```
 
 Local formula template: [`Formula/yankovinator.rb`](../Formula/yankovinator.rb). Tap: [homebrew-yankovinator](https://github.com/shyamalschandra/homebrew-yankovinator).

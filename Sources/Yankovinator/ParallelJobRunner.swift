@@ -14,14 +14,18 @@ public enum ParallelJobRunner {
     /// Suggested worker count for cloud Ollama batch runs (rate-limit safe).
     public static let recommendedCloudWorkers = 4
 
-    /// Hard upper bound for CLI `--workers` (producer-consumer queue depth).
-    public static let maxWorkers = 128
+    /// Hard upper bound for CLI `--workers` (license terms: at most 10 concurrent generations).
+    public static let maxWorkers = 10
 
-    /// Maximum concurrent consumer workers (in-flight jobs). Match `--workers` up to this cap.
-    public static let maxConcurrentConsumers = 128
+    /// Maximum concurrent consumer workers (in-flight jobs). Absolute license cap of 10.
+    public static let maxConcurrentConsumers = 10
+
+    /// License-driven absolute maximum concurrent Ollama/generation consumers.
+    public static let licenseMaxConcurrentConsumers = 10
 
     /// Effective consumer count: at most `maxConcurrentConsumers` workers run at once.
-    /// When `ollamaNumParallel` is set (Ollama server `OLLAMA_NUM_PARALLEL`), consumers are capped to match.
+    /// When `ollamaNumParallel` is set (Ollama server `OLLAMA_NUM_PARALLEL`), consumers are capped to match
+    /// (never above the license maximum of 10).
     public static func consumerPoolSize(
         requestedWorkers: Int,
         ollamaNumParallel: Int? = nil,
@@ -38,7 +42,7 @@ public enum ParallelJobRunner {
         }
         let base = min(requested, maxConcurrentConsumers)
         guard let ollamaNumParallel, ollamaNumParallel >= 1 else { return base }
-        return min(base, ollamaNumParallel)
+        return min(base, min(ollamaNumParallel, maxConcurrentConsumers))
     }
 
     /// True when the Ollama base URL points at this machine (server env vars apply).
@@ -296,7 +300,7 @@ public enum ParallelJobError: Error, CustomStringConvertible, Sendable {
     public var description: String {
         switch self {
         case .invalidWorkerCount(let requested, let max):
-            return "Workers must be between 1 and \(max) (got \(requested)). Concurrent consumers are capped at \(ParallelJobRunner.maxConcurrentConsumers) (producer-consumer queue)."
+            return "Workers must be between 1 and \(max) (got \(requested)). License terms cap concurrent Ollama/generation consumers at \(ParallelJobRunner.licenseMaxConcurrentConsumers)."
         case .invalidCandidateCount(let requested, let max):
             return "Candidates must be between 1 and \(max) (got \(requested)). For combinatorial ranking, try --candidates \(CandidateParodyGenerator.recommendedCandidates)."
         case .emptyInputDirectory(let path):

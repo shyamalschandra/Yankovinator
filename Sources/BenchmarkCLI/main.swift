@@ -39,7 +39,7 @@ struct BenchmarkCLI: AsyncParsableCommand {
 
     @Option(
         name: [.customLong("workers"), .customLong("jobs")],
-        help: "Max parallel benchmark iterations (1-32; default 1; use 10 for cloud)"
+        help: "Max parallel benchmark iterations (1-\(ParallelJobRunner.maxWorkers); default 1; license max \(ParallelJobRunner.licenseMaxConcurrentConsumers))"
     )
     var workers: Int = 1
 
