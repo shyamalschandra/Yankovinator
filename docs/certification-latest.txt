@@ -1,6 +1,6 @@
 Yankovinator certification report
-Generated: 2026-07-27T23:16:30Z
-Expected version: 1.06.8
+Generated: 2026-07-28T12:33:48Z
+Expected version: 1.06.10
 Host: Darwin 25.5.0 arm64
 Pass: 53  Fail: 0
 
@@ -10,7 +10,7 @@ PASS  swift test
 PASS  yankovinator --help
 PASS  keyword-generator --help
 PASS  benchmark --help
-PASS  version == 1.06.8
+PASS  version == 1.06.10
 PASS  help: no-progress
 PASS  help: midi-progress
 PASS  help: no-cloud-prescription
