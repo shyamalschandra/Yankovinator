@@ -8,71 +8,35 @@ Source for the Yankovinator website deployed from this `docs/` directory.
 
 | File | Role |
 |---|---|
-| `index.html` | Main marketing / install page |
-| `styles.css` | Layout, gradients, motion |
-| `script.ts` | TypeScript UI source (edit this) |
+| `index.html` | Compact brand-first landing (hero + install/docs) |
+| `styles.css` | Stage Brass theme (Syne/Sora, teal + brass) |
+| `script.ts` | Tabs, copy, sample demo, lyric typewriter |
 | `script.js` | Compiled JS from `tsc` (generated) |
 | `RELEASES.md` | Binary release install notes |
 | `CERTIFICATION.md` | Release certification battery guide |
 | `certification-latest.txt` | Latest local certification report |
 | `DEPLOYMENT.md` | Pages deployment status |
-| `yankovinator.tex` | Technical paper |
-| `presentation.tex` | Beamer slides |
-| `reference.tex` | API reference |
+
+## Design notes
+
+- First viewport: **Yankovinator** as the hero brand, one headline, one lede, CTAs, full-bleed lyric plane
+- Second band: Homebrew/Source install + capabilities + docs (minimal scroll)
+- Motions: brand entrance, score-wave dash, lyric typewriter
 
 ## Development
 
-### Prerequisites
-
-- Node.js 20+
-- npm
-
-### Setup and build
-
 ```bash
-# from repository root
 npm install
-npm run build    # compiles docs/script.ts → docs/script.js
-npm run watch    # optional live recompile
-```
-
-Do not hand-edit `script.js`; change `script.ts` and rebuild.
-
-### Preview locally
-
-Open `docs/index.html` in a browser, or serve the folder:
-
-```bash
+npm run build    # docs/script.ts → docs/script.js
 cd docs && python3 -m http.server 8080
 ```
 
 ## Deployment
 
-GitHub Actions builds a clean `_site/` artifact and deploys it with the official Pages actions (see `.github/workflows/pages.yml`):
-
-1. Checkout + Node 20 (`npm ci`, `tsc`)
-2. Build LaTeX PDFs (`yankovinator`, `presentation`, `reference`)
-3. Stage only publishable assets into `_site/`
-4. Upload Pages artifact + deploy
-
-Manual trigger:
+GitHub Actions (`.github/workflows/pages.yml`) builds TypeScript + LaTeX PDFs and deploys `_site/`.
 
 ```bash
 gh workflow run "Deploy GitHub Pages"
 ```
 
 Details: [DEPLOYMENT.md](DEPLOYMENT.md)
-
-## Site features
-
-- Interactive demo UI with progress / loading states
-- Smooth scroll, parallax accents, SVG hover motion
-- Responsive layout for desktop and mobile
-- Install tabs (Homebrew vs source) with Ollama setup
-- Links to releases, docs, and Ollama
-
-## Related docs (repo root)
-
-- [../README.md](../README.md) — full product guide
-- [../QUICK_START.md](../QUICK_START.md) — fastest path to a working parody
-- [RELEASES.md](RELEASES.md) — pre-built binaries
