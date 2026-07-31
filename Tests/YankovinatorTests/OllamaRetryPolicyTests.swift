@@ -16,7 +16,65 @@ final class OllamaRetryPolicyTests: XCTestCase {
         XCTAssertFalse(OllamaRetryPolicy.isRetryableHTTPStatus(500))
     }
 
-    func testTransientNetworkIncludesPortExhaustion() {
+    func testDNSConnectivityFailureStrings() {
+        XCTAssertTrue(
+            OllamaRetryPolicy.isDNSConnectivityFailure(
+                "dial tcp: lookup ollama.com: i/o timeout"
+            )
+        )
+        XCTAssertTrue(
+            OllamaRetryPolicy.isDNSConnectivityFailure(
+                "dial tcp: lookup ollama.com: no such host"
+            )
+        )
+        XCTAssertTrue(
+            OllamaRetryPolicy.isDNSConnectivityFailure("network is unreachable")
+        )
+        XCTAssertTrue(
+            OllamaRetryPolicy.isDNSConnectivityFailure("temporary failure in name resolution")
+        )
+        XCTAssertTrue(
+            OllamaRetryPolicy.isDNSConnectivityFailure("can't assign requested address")
+        )
+        XCTAssertTrue(
+            OllamaRetryPolicy.isDNSConnectivityFailure("cannot assign requested address")
+        )
+        XCTAssertFalse(
+            OllamaRetryPolicy.isDNSConnectivityFailure("request timeout after 600s")
+        )
+        XCTAssertFalse(
+            OllamaRetryPolicy.isDNSConnectivityFailure("model not found")
+        )
+    }
+
+    func testDNSConnectivityHTTPFailureRequiresGatewayStatus() {
+        let body = "dial tcp: lookup ollama.com: no such host"
+        XCTAssertTrue(OllamaRetryPolicy.isDNSConnectivityHTTPFailure(statusCode: 502, bodyOrMessage: body))
+        XCTAssertTrue(OllamaRetryPolicy.isDNSConnectivityHTTPFailure(statusCode: 503, bodyOrMessage: body))
+        XCTAssertFalse(OllamaRetryPolicy.isDNSConnectivityHTTPFailure(statusCode: 429, bodyOrMessage: body))
+        XCTAssertFalse(OllamaRetryPolicy.isDNSConnectivityHTTPFailure(statusCode: 500, bodyOrMessage: body))
+    }
+
+    func testMaxAttemptsHigherForCloudDNS() {
+        XCTAssertEqual(
+            OllamaRetryPolicy.maxAttempts(isCloud: true, isDNSConnectivity: true),
+            OllamaRetryPolicy.cloudDNSMaxAttempts
+        )
+        XCTAssertEqual(
+            OllamaRetryPolicy.maxAttempts(isCloud: true, isDNSConnectivity: false),
+            OllamaRetryPolicy.defaultMaxAttempts
+        )
+        XCTAssertEqual(
+            OllamaRetryPolicy.maxAttempts(isCloud: false, isDNSConnectivity: true),
+            OllamaRetryPolicy.localMaxAttempts
+        )
+        XCTAssertGreaterThan(
+            OllamaRetryPolicy.cloudDNSMaxAttempts,
+            OllamaRetryPolicy.defaultMaxAttempts
+        )
+    }
+
+    func testTransientNetworkIncludesPortExhaustionAndDNS() {
         struct FakeError: Error, CustomStringConvertible {
             let description: String
         }
@@ -35,11 +93,30 @@ final class OllamaRetryPolicyTests: XCTestCase {
                 FakeError(description: "too many open files")
             )
         )
+        XCTAssertTrue(
+            OllamaRetryPolicy.isTransientNetworkError(
+                FakeError(description: "dial tcp: lookup ollama.com: i/o timeout")
+            )
+        )
+        XCTAssertTrue(
+            OllamaRetryPolicy.isTransientNetworkError(
+                FakeError(description: "dial tcp: lookup ollama.com: no such host")
+            )
+        )
         XCTAssertFalse(
             OllamaRetryPolicy.isTransientNetworkError(
                 FakeError(description: "request timeout after 600s")
             )
         )
+    }
+
+    func testHTTPErrorDescriptionMentionsDNSConnectivity() {
+        let error = OllamaError.httpError(
+            statusCode: 502,
+            message: ": dial tcp: lookup ollama.com: no such host"
+        )
+        XCTAssertTrue(error.description.contains("DNS/connectivity to ollama.com"))
+        XCTAssertTrue(error.description.contains("502"))
     }
 
     func testParseRetryAfterSeconds() {
@@ -81,6 +158,22 @@ final class OllamaRetryPolicyTests: XCTestCase {
         let later = OllamaRetryPolicy.backoffSeconds(attempt: 4, randomUniform: { 1.0 })
         XCTAssertLessThanOrEqual(later, 60.0)
         XCTAssertGreaterThan(later, high)
+    }
+
+    func testDNSBackoffHasHigherFloor() {
+        let dns = OllamaRetryPolicy.backoffSeconds(
+            attempt: 1,
+            isDNSConnectivity: true,
+            randomUniform: { 0.0 }
+        )
+        XCTAssertGreaterThanOrEqual(dns, 2.0)
+        let ordinary = OllamaRetryPolicy.backoffSeconds(
+            attempt: 1,
+            isDNSConnectivity: false,
+            randomUniform: { 0.0 }
+        )
+        XCTAssertGreaterThanOrEqual(ordinary, 0.25)
+        XCTAssertLessThan(ordinary, dns + 0.01)
     }
 
     func testBackoffNanosecondsPositive() {

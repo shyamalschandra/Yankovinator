@@ -23,7 +23,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
           # If songs×themes×candidates > 100, add --force
           # Stop/restart: disk-paged checkpoints under --output-dir/.yankovinator (use --fresh-batch to reset)
         """,
-        version: "1.06.13"
+        version: "1.06.14"
     )
 
     @Option(name: [.long, .customShort("u")], help: "Ollama API base URL (local or cloud)")
@@ -509,127 +509,142 @@ struct YankovinatorCLI: AsyncParsableCommand {
                 await checkpoint.seedScore(jobID: job.id, score: bestScore)
             }
         }
+        var unitFailures: [ParallelJobIsolatedError] = []
         if pendingExpanded.isEmpty {
             // Nothing new to generate — fall through to final ranking from disk.
         } else {
-            _ = try await ParallelJobRunner.map(
-            items: pendingExpanded,
-            workers: rx.effectiveWorkers,
-            showProgress: showProgress,
-            progressLabel: "Generations",
-            ollamaNumParallel: serverParallel,
-            progressHandle: progressHandle,
-            enableMIDIProgress: midiProgress,
-            model: model,
-            applyCloudPrescription: false,
-            progress: { completed, total in
-                if verbose {
+            let settled = try await ParallelJobRunner.mapAllowingFailures(
+                items: pendingExpanded,
+                workers: rx.effectiveWorkers,
+                showProgress: showProgress,
+                progressLabel: "Generations",
+                ollamaNumParallel: serverParallel,
+                progressHandle: progressHandle,
+                enableMIDIProgress: midiProgress,
+                model: model,
+                applyCloudPrescription: false,
+                isolateFailures: true,
+                progress: { completed, total in
+                    if verbose {
+                        if useTUIStatus {
+                            Task { await progressHandle?.postMessage("completed \(completed)/\(total)") }
+                        } else {
+                            Task { await log.printLine("Generations completed: \(completed)/\(total)") }
+                        }
+                    }
+                }
+            ) { item in
+                guard let lyrics = lyricsByPath[item.job.lyricsPath] else {
+                    throw ValidationError("Missing preloaded lyrics for \(item.job.lyricsPath)")
+                }
+                let keywordsDict: [String: String]
+                if let keywordsPath = item.job.keywordsPath {
+                    guard let cached = keywordsByPath[keywordsPath] else {
+                        throw ValidationError("Missing preloaded keywords for \(keywordsPath)")
+                    }
+                    keywordsDict = cached
+                } else {
+                    keywordsDict = defaultKeywords
+                }
+
+                if analyze && item.candidateIndex == 1 {
+                    let msg = "[\(item.job.id)] syllable analysis (\(lyrics.filter { !$0.isEmpty }.count) non-empty lines)"
                     if useTUIStatus {
-                        Task { await progressHandle?.postMessage("completed \(completed)/\(total)") }
+                        await progressHandle?.postMessage(msg)
                     } else {
-                        Task { await log.printLine("Generations completed: \(completed)/\(total)") }
+                        await log.printLine(msg)
                     }
                 }
-            }
-        ) { item in
-            guard let lyrics = lyricsByPath[item.job.lyricsPath] else {
-                throw ValidationError("Missing preloaded lyrics for \(item.job.lyricsPath)")
-            }
-            let keywordsDict: [String: String]
-            if let keywordsPath = item.job.keywordsPath {
-                guard let cached = keywordsByPath[keywordsPath] else {
-                    throw ValidationError("Missing preloaded keywords for \(keywordsPath)")
-                }
-                keywordsDict = cached
-            } else {
-                keywordsDict = defaultKeywords
-            }
 
-            if analyze && item.candidateIndex == 1 {
-                let msg = "[\(item.job.id)] syllable analysis (\(lyrics.filter { !$0.isEmpty }.count) non-empty lines)"
-                if useTUIStatus {
-                    await progressHandle?.postMessage(msg)
-                } else {
-                    await log.printLine(msg)
-                }
-            }
-
-            if verbose {
-                let msg = "[\(item.job.id)#c\(item.candidateIndex)] generating…"
-                if useTUIStatus {
-                    await progressHandle?.postMessage(msg)
-                } else {
-                    await log.printLine(msg)
-                }
-            }
-
-            let generator = ParodyGenerator(
-                ollamaBaseURL: ollamaURL,
-                ollamaModel: model,
-                useDictionary: true,
-                useUnsupervisedNLP: false,
-                skipLLMCoherenceCritic: skipLLMCoherence
-            )
-            let parodyLines = try await generator.generateParody(
-                originalLyrics: lyrics,
-                keywords: keywordsDict,
-                progressCallback: { line, total in
-                    guard useTUIStatus, let ctx = WorkerJobContext.current else { return }
-                    Task {
-                        await progressHandle?.postWorkerLineProgress(
-                            workerID: ctx.workerID,
-                            line: line,
-                            total: total
-                        )
-                    }
-                },
-                refinementPasses: batchRefinementPasses,
-                enableCoherenceRegeneration: enableCoherenceRegeneration,
-                optimizeFit: fitOptimize,
-                fitTargetScore: ParodyFitScore.defaultCorrectnessThreshold,
-                maxFitAttemptsPerLine: fitOptimize ? 2 : 0,
-                fitPolishRounds: fitOptimize ? 1 : 0,
-                verbose: verbose
-            )
-            let score = CandidateParodyGenerator.scoreParody(
-                lines: parodyLines,
-                keywords: keywordsDict,
-                originalLyrics: lyrics,
-                dictionary: OEDDictionary.shared
-            )
-            let result = ParodyCandidateResult(index: item.candidateIndex, lines: parodyLines, score: score)
-
-            try await resumeStore.record(job: item.job, result: result)
-
-            if candidates > 1 {
-                try await checkpoint.consider(job: item.job, result: result) { message in
+                if verbose {
+                    let msg = "[\(item.job.id)#c\(item.candidateIndex)] generating…"
                     if useTUIStatus {
-                        Task { await progressHandle?.postMessage(message) }
-                    } else if verbose {
-                        Task { await log.printLine(message) }
+                        await progressHandle?.postMessage(msg)
+                    } else {
+                        await log.printLine(msg)
                     }
                 }
-            }
 
-            if verbose {
-                let fit = ParodyFitScorer.scoreSong(
+                let generator = ParodyGenerator(
+                    ollamaBaseURL: ollamaURL,
+                    ollamaModel: model,
+                    useDictionary: true,
+                    useUnsupervisedNLP: false,
+                    skipLLMCoherenceCritic: skipLLMCoherence
+                )
+                let parodyLines = try await generator.generateParody(
                     originalLyrics: lyrics,
-                    parodyLines: parodyLines,
                     keywords: keywordsDict,
+                    progressCallback: { line, total in
+                        guard useTUIStatus, let ctx = WorkerJobContext.current else { return }
+                        Task {
+                            await progressHandle?.postWorkerLineProgress(
+                                workerID: ctx.workerID,
+                                line: line,
+                                total: total
+                            )
+                        }
+                    },
+                    refinementPasses: batchRefinementPasses,
+                    enableCoherenceRegeneration: enableCoherenceRegeneration,
+                    optimizeFit: fitOptimize,
+                    fitTargetScore: ParodyFitScore.defaultCorrectnessThreshold,
+                    maxFitAttemptsPerLine: fitOptimize ? 2 : 0,
+                    fitPolishRounds: fitOptimize ? 1 : 0,
+                    verbose: verbose
+                )
+                let score = CandidateParodyGenerator.scoreParody(
+                    lines: parodyLines,
+                    keywords: keywordsDict,
+                    originalLyrics: lyrics,
                     dictionary: OEDDictionary.shared
                 )
-                let msg =
-                    "[\(item.job.id)#c\(item.candidateIndex)] score=\(String(format: "%.3f", score)) " +
-                    "minLine=\(String(format: "%.3f", fit.minComposite)) allFit=\(fit.allFit)"
-                if useTUIStatus {
-                    await progressHandle?.postMessage(msg)
-                } else {
-                    await log.printLine(msg)
+                let result = ParodyCandidateResult(index: item.candidateIndex, lines: parodyLines, score: score)
+
+                try await resumeStore.record(job: item.job, result: result)
+
+                if candidates > 1 {
+                    try await checkpoint.consider(job: item.job, result: result) { message in
+                        if useTUIStatus {
+                            Task { await progressHandle?.postMessage(message) }
+                        } else if verbose {
+                            Task { await log.printLine(message) }
+                        }
+                    }
                 }
+
+                if verbose {
+                    let fit = ParodyFitScorer.scoreSong(
+                        originalLyrics: lyrics,
+                        parodyLines: parodyLines,
+                        keywords: keywordsDict,
+                        dictionary: OEDDictionary.shared
+                    )
+                    let msg =
+                        "[\(item.job.id)#c\(item.candidateIndex)] score=\(String(format: "%.3f", score)) " +
+                        "minLine=\(String(format: "%.3f", fit.minComposite)) allFit=\(fit.allFit)"
+                    if useTUIStatus {
+                        await progressHandle?.postMessage(msg)
+                    } else {
+                        await log.printLine(msg)
+                    }
+                }
+
+                return "\(item.job.id)#c\(item.candidateIndex)"
             }
 
-            return
-        }
+            for (offset, outcome) in settled.enumerated() {
+                if case .failure(let failure) = outcome {
+                    unitFailures.append(failure)
+                    let item = pendingExpanded[offset]
+                    let warn = "⚠️  [\(item.job.id)#c\(item.candidateIndex)] failed (continuing): \(failure.underlyingDescription)"
+                    if useTUIStatus {
+                        await progressHandle?.postMessage(warn)
+                    } else {
+                        fputs(warn + "\n", stderr)
+                    }
+                }
+            }
         }
 
         try await resumeStore.flushManifest()
@@ -674,6 +689,15 @@ struct YankovinatorCLI: AsyncParsableCommand {
         }
         if outcomes.count > 50 {
             print("  … and \(outcomes.count - 50) more")
+        }
+
+        if !unitFailures.isEmpty {
+            let preview = unitFailures.prefix(10).map(\.description).joined(separator: "\n  ")
+            let more = unitFailures.count > 10 ? "\n  … and \(unitFailures.count - 10) more" : ""
+            throw ValidationError("""
+            \(unitFailures.count) generation(s) failed; durable progress kept under \(outputRoot)/.yankovinator (re-run to resume).
+              \(preview)\(more)
+            """)
         }
     }
 
@@ -726,6 +750,43 @@ struct YankovinatorCLI: AsyncParsableCommand {
             }
         } else {
             OllamaClient.markModelVerified(baseURL: ollamaURL, model: model)
+        }
+
+        if CloudBatchPrescription.isCloudModel(model) {
+            if verbose {
+                print("Probing cloud upstream (ollama.com) for \(model)…")
+            }
+            do {
+                try await generator.probeCloudUpstreamConnectivity()
+            } catch let error as OllamaError {
+                let detail = error.description
+                if OllamaRetryPolicy.isDNSConnectivityFailure(detail) {
+                    throw ValidationError("""
+                    Cloud preflight failed: DNS/connectivity to ollama.com is unreachable.
+
+                    \(detail)
+
+                    To fix this:
+                    1. Check network, VPN, DNS, or firewall (ollama.com must resolve from the machine running Ollama)
+                    2. Retry later when connectivity recovers
+                    3. Or use a local model: --model llama3.2:3b
+                    """)
+                }
+                throw ValidationError("""
+                Cloud preflight failed for \(model).
+
+                \(detail)
+
+                Ensure you are signed in to Ollama cloud (`ollama signin`) and the model is available.
+                Or use a local model: --model llama3.2:3b
+                """)
+            } catch {
+                throw ValidationError("""
+                Cloud preflight failed for \(model): \(error.localizedDescription)
+
+                Check network/VPN/DNS for ollama.com, retry later, or use a local model (--model llama3.2:3b).
+                """)
+            }
         }
 
         if verbose {

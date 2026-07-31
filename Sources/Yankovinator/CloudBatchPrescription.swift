@@ -92,7 +92,7 @@ public enum CloudBatchPrescription: Sendable {
         }
 
         messages.append(
-            "Rx: Retries with backoff on 429/502/503; one generate call per lyric line; checkpoints after each candidate."
+            "Rx: Retries with backoff on 429/502/503 (+ longer DNS/connectivity backoff); one generate call per lyric line; checkpoints after each candidate; isolate unit failures."
         )
 
         return Plan(

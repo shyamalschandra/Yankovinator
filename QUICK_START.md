@@ -92,7 +92,7 @@ swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./
   --verbose
 ```
 
-Cloud runs retry **429/502** with backoff and default-cap consumers at **4**. Higher `--workers` needs `--no-cloud-prescription` (risk of rate limits; absolute license max **10** concurrent).
+Cloud runs retry **429/502** (plus longer backoff for DNS/connectivity to `ollama.com`) with a default consumer cap of **4**, and isolate per-candidate failures so checkpoints stay usable. Higher `--workers` needs `--no-cloud-prescription` (risk of rate limits; absolute license max **10** concurrent).
 
 ### Combinatorial batch (songs × themes × 10 candidates)
 

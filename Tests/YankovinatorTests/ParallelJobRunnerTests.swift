@@ -32,6 +32,57 @@ final class ParallelJobRunnerTests: XCTestCase {
         XCTAssertEqual(results, items.map { $0 * 2 })
     }
 
+    func testMapAllowingFailuresContinuesAfterUnitFailure() async throws {
+        struct Boom: Error, CustomStringConvertible {
+            var description: String { "boom" }
+        }
+        let items = Array(0..<8)
+        let outcomes = try await ParallelJobRunner.mapAllowingFailures(
+            items: items,
+            workers: 4,
+            isolateFailures: true
+        ) { value in
+            if value == 3 {
+                throw Boom()
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
+            return value * 10
+        }
+
+        XCTAssertEqual(outcomes.count, 8)
+        var successes = 0
+        var failures = 0
+        for (index, outcome) in outcomes.enumerated() {
+            switch outcome {
+            case .success(let value):
+                successes += 1
+                XCTAssertEqual(value, index * 10)
+            case .failure(let error):
+                failures += 1
+                XCTAssertEqual(error.index, 3)
+                XCTAssertTrue(error.underlyingDescription.contains("boom"))
+            }
+        }
+        XCTAssertEqual(successes, 7)
+        XCTAssertEqual(failures, 1)
+    }
+
+    func testMapStillAbortsEntireBatchWhenIsolateFailuresDisabled() async {
+        struct Boom: Error {}
+        do {
+            _ = try await ParallelJobRunner.map(items: Array(0..<6), workers: 3) { value in
+                if value == 1 { throw Boom() }
+                try await Task.sleep(nanoseconds: 10_000_000)
+                return value
+            }
+            XCTFail("Expected map to throw")
+        } catch is Boom {
+            // expected
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testMapRespectsWorkerCap() async throws {
         actor Counter {
             var inFlight = 0

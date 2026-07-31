@@ -75,7 +75,8 @@ public enum ParallelJobRunner {
     /// - Producer: enqueues all items in order.
     /// - Consumers: fixed pool of size `consumerPoolSize(workers)` pulls jobs concurrently (up to `maxConcurrentConsumers`).
     /// - Results preserve input order.
-    public static func map<Item: Sendable, Result: Sendable>(
+    /// - A single throwing unit aborts the whole batch (use `mapAllowingFailures` for resume-friendly batches).
+    public static func map<Item: Sendable, Value: Sendable>(
         items: [Item],
         workers: Int,
         showProgress: Bool = false,
@@ -86,8 +87,49 @@ public enum ParallelJobRunner {
         model: String? = nil,
         applyCloudPrescription: Bool = true,
         progress: (@Sendable (Int, Int) -> Void)? = nil,
-        operation: @escaping @Sendable (Item) async throws -> Result
-    ) async throws -> [Result] {
+        operation: @escaping @Sendable (Item) async throws -> Value
+    ) async throws -> [Value] {
+        let outcomes = try await mapAllowingFailures(
+            items: items,
+            workers: workers,
+            showProgress: showProgress,
+            progressLabel: progressLabel,
+            ollamaNumParallel: ollamaNumParallel,
+            progressHandle: progressHandle,
+            enableMIDIProgress: enableMIDIProgress,
+            model: model,
+            applyCloudPrescription: applyCloudPrescription,
+            isolateFailures: false,
+            progress: progress,
+            operation: operation
+        )
+        return try outcomes.map { outcome in
+            switch outcome {
+            case .success(let value):
+                return value
+            case .failure(let error):
+                throw error
+            }
+        }
+    }
+
+    /// Like `map`, but optionally isolates per-item failures so other units keep running.
+    /// When `isolateFailures` is true, each failure becomes `.failure` and peers continue
+    /// (resume checkpoints for successful units remain durable).
+    public static func mapAllowingFailures<Item: Sendable, Value: Sendable>(
+        items: [Item],
+        workers: Int,
+        showProgress: Bool = false,
+        progressLabel: String = "Jobs",
+        ollamaNumParallel: Int? = nil,
+        progressHandle: CLIWorkerPoolProgress? = nil,
+        enableMIDIProgress: Bool = false,
+        model: String? = nil,
+        applyCloudPrescription: Bool = true,
+        isolateFailures: Bool = true,
+        progress: (@Sendable (Int, Int) -> Void)? = nil,
+        operation: @escaping @Sendable (Item) async throws -> Value
+    ) async throws -> [Result<Value, ParallelJobIsolatedError>] {
         guard !items.isEmpty else { return [] }
 
         let poolSize = consumerPoolSize(
@@ -113,10 +155,19 @@ public enum ParallelJobRunner {
         }
 
         if poolSize == 1 || items.count == 1 {
-            var results: [Result] = []
+            var results: [Result<Value, ParallelJobIsolatedError>] = []
             results.reserveCapacity(items.count)
             for (index, item) in items.enumerated() {
-                results.append(try await operation(item))
+                do {
+                    let value = try await operation(item)
+                    results.append(.success(value))
+                } catch {
+                    if isolateFailures {
+                        results.append(.failure(ParallelJobIsolatedError(index: index, underlyingDescription: String(describing: error))))
+                    } else {
+                        throw error
+                    }
+                }
                 progress?(index + 1, items.count)
                 if let simpleBar { await simpleBar.advance() }
             }
@@ -124,24 +175,26 @@ public enum ParallelJobRunner {
             return results
         }
 
-        return try await mapProducerConsumer(
+        return try await mapProducerConsumerAllowingFailures(
             items: items,
             consumerCount: poolSize,
             workerPool: workerPool,
+            isolateFailures: isolateFailures,
             progress: progress,
             operation: operation
         )
     }
 
     /// Producer-consumer executor (OS-style bounded worker pool).
-    private static func mapProducerConsumer<Item: Sendable, Result: Sendable>(
+    private static func mapProducerConsumerAllowingFailures<Item: Sendable, Value: Sendable>(
         items: [Item],
         consumerCount: Int,
         workerPool: CLIWorkerPoolProgress?,
+        isolateFailures: Bool,
         progress: (@Sendable (Int, Int) -> Void)?,
-        operation: @escaping @Sendable (Item) async throws -> Result
-    ) async throws -> [Result] {
-        let store = OrderedResultStore<Result>(capacity: items.count)
+        operation: @escaping @Sendable (Item) async throws -> Value
+    ) async throws -> [Result<Value, ParallelJobIsolatedError>] {
+        let store = OrderedOutcomeStore<Value>(capacity: items.count)
         let counter = CompletionCounter(total: items.count)
 
         let (stream, continuation) = AsyncStream<(Int, Item)>.makeStream()
@@ -161,12 +214,28 @@ public enum ParallelJobRunner {
                             await workerPool.beginJob(workerID: workerID, jobNumber: index + 1)
                             await workerPool.postMessage("W\(String(format: "%02d", workerID + 1)) → job #\(index + 1)")
                         }
-                        let value = try await WorkerJobContext.$current.withValue(
-                            WorkerJobContext.State(workerID: workerID, jobNumber: index + 1)
-                        ) {
-                            try await operation(item)
+                        do {
+                            let value = try await WorkerJobContext.$current.withValue(
+                                WorkerJobContext.State(workerID: workerID, jobNumber: index + 1)
+                            ) {
+                                try await operation(item)
+                            }
+                            await store.put(index: index, outcome: .success(value))
+                        } catch {
+                            if isolateFailures {
+                                await store.put(
+                                    index: index,
+                                    outcome: .failure(
+                                        ParallelJobIsolatedError(
+                                            index: index,
+                                            underlyingDescription: String(describing: error)
+                                        )
+                                    )
+                                )
+                            } else {
+                                throw error
+                            }
                         }
-                        await store.put(index: index, value: value)
                         let (done, total) = await counter.increment()
                         progress?(done, total)
                         if let workerPool {
@@ -183,24 +252,39 @@ public enum ParallelJobRunner {
         if let workerPool {
             await workerPool.finish()
         }
-        return try await store.orderedResults()
+        return try await store.orderedOutcomes()
     }
 }
 
 // MARK: - Producer-consumer helpers
 
-private actor OrderedResultStore<Result: Sendable> {
-    private var slots: [Result?]
+/// Per-unit failure captured when `mapAllowingFailures(isolateFailures: true)` continues after an error.
+public struct ParallelJobIsolatedError: Error, CustomStringConvertible, Sendable {
+    public let index: Int
+    public let underlyingDescription: String
+
+    public init(index: Int, underlyingDescription: String) {
+        self.index = index
+        self.underlyingDescription = underlyingDescription
+    }
+
+    public var description: String {
+        "Job #\(index + 1) failed: \(underlyingDescription)"
+    }
+}
+
+private actor OrderedOutcomeStore<Value: Sendable> {
+    private var slots: [Result<Value, ParallelJobIsolatedError>?]
 
     init(capacity: Int) {
         slots = Array(repeating: nil, count: capacity)
     }
 
-    func put(index: Int, value: Result) {
-        slots[index] = value
+    func put(index: Int, outcome: Result<Value, ParallelJobIsolatedError>) {
+        slots[index] = outcome
     }
 
-    func orderedResults() throws -> [Result] {
+    func orderedOutcomes() throws -> [Result<Value, ParallelJobIsolatedError>] {
         try slots.enumerated().map { offset, value in
             guard let value else {
                 throw ParallelJobError.missingProducerConsumerResult(index: offset)

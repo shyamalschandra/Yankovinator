@@ -49,11 +49,11 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.13**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.14**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.13/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.14/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator yankovinator-tui keyword-generator /usr/local/bin/
@@ -72,7 +72,7 @@ See [docs/RELEASES.md](docs/RELEASES.md) for architecture-specific downloads and
 brew tap shyamalschandra/yankovinator
 brew install yankovinator
 
-yankovinator --version          # → 1.06.13+
+yankovinator --version          # → 1.06.14+
 yankovinator --help
 keyword-generator --help
 ```
@@ -193,12 +193,14 @@ swift run yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./
 
 **Cloud Ollama (rate-limit safe):**
 
-Cloud models (`*:cloud`, including via local `localhost:11434` proxy) get automatic **retries** on **429 / 502 / 503** (backoff + `Retry-After`) and a default consumer cap of **4**. Prefer:
+Cloud models (`*:cloud`, including via local `localhost:11434` proxy) get automatic **retries** on **429 / 502 / 503** (backoff + `Retry-After`), extra retries/backoff for **DNS/connectivity to ollama.com**, a default consumer cap of **4**, and a cloud preflight probe before heavy batches. Prefer:
 
 ```bash
 yankovinator --input-dir ./songs --themes-dir ./themes --output-dir ./out \
   --model gemma4:31b-cloud --workers 4 --candidates 20 --force --verbose
 ```
+
+**Tip:** If you see `lookup ollama.com: no such host` / `i/o timeout`, check VPN/DNS/firewall (the host running Ollama must resolve `ollama.com`), retry later, or switch to a local model (`--model llama3.2:3b`). Single candidate failures no longer abort the whole batch when checkpoints exist — re-run the same command to resume.
 
 Raising `--workers` / `--ollama-num-workers` above ~4 against cloud often triggers **429** or ephemeral-port exhaustion (`can't assign requested address`). Use **`--no-cloud-prescription`** only if you accept that risk (still hard-capped at **10** by license terms). If a failed run left a bad checkpoint, add **`--fresh-batch`**.
 
@@ -353,7 +355,8 @@ See [docs/CERTIFICATION.md](docs/CERTIFICATION.md). Latest run summary: [docs/ce
 | Resource | Description |
 |---|---|
 | [QUICK_START.md](QUICK_START.md) | Fast path from clone to first parody |
-| [RELEASE_NOTES_v1.06.13.md](RELEASE_NOTES_v1.06.13.md) | Latest (license max 10 concurrent consumers) |
+| [RELEASE_NOTES_v1.06.14.md](RELEASE_NOTES_v1.06.14.md) | Latest (cloud DNS resilience + batch isolation) |
+| [RELEASE_NOTES_v1.06.13.md](RELEASE_NOTES_v1.06.13.md) | License max 10 concurrent consumers |
 | [RELEASE_NOTES_v1.06.12.md](RELEASE_NOTES_v1.06.12.md) | Disk-paged batch checkpoints |
 | [RELEASE_NOTES_v1.06.10.md](RELEASE_NOTES_v1.06.10.md) | Per-worker elapsed/remain on progress bars |
 | [RELEASE_NOTES_v1.06.9.md](RELEASE_NOTES_v1.06.9.md) | TUI color boxes + emoji bars per worker |

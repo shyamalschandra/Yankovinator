@@ -1162,6 +1162,11 @@ public class ParodyGenerator {
         try await ollamaClient.verifyModel()
     }
 
+    /// Probe `:cloud` upstream (ollama.com) before a heavy batch. No-op for local models.
+    public func probeCloudUpstreamConnectivity(timeoutSeconds: Int = 45) async throws {
+        try await ollamaClient.probeCloudUpstreamConnectivity(timeoutSeconds: timeoutSeconds)
+    }
+
     /// Serialize stdout logging from parallel workers (avoids interleaved / corrupted verbose spam).
     private static func verbosePrint(_ message: String) {
         NLConcurrency.synchronized {

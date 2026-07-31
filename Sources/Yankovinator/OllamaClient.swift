@@ -22,6 +22,8 @@ public class OllamaClient {
     private static var workerConnectionHint = 16
     private static var cloudConcurrencyLimit = 0
     private static var maxRetryAttempts = OllamaRetryPolicy.defaultMaxAttempts
+    /// Optional hard ceiling on retries (used by cloud preflight to fail fast).
+    private static var maxRetryAttemptsCeiling: Int?
     private static var verifiedModelKeys: Set<String> = []
     private static let verificationLock = NSLock()
     private static let cloudGate = CloudRequestGate()
@@ -66,13 +68,14 @@ public class OllamaClient {
 
         if isCloud {
             // Prefer connection reuse; concurrency already reflects prescription / --workers.
+            // Base attempts for 429/ordinary 502; DNS/connectivity dynamically extends to cloudDNSMaxAttempts.
             workerConnectionHint = max(4, min(concurrent + 2, 32))
             cloudConcurrencyLimit = max(1, concurrent)
             maxRetryAttempts = OllamaRetryPolicy.defaultMaxAttempts
         } else {
             workerConnectionHint = max(8, min(concurrent + 12, 512))
             cloudConcurrencyLimit = 0
-            maxRetryAttempts = 4
+            maxRetryAttempts = OllamaRetryPolicy.localMaxAttempts
         }
 
         Task {
@@ -148,6 +151,7 @@ public class OllamaClient {
     }
 
     /// Execute an HTTP request with retries for transient network errors and 429/502/503/504.
+    /// DNS/connectivity upstream failures (ollama.com lookup) get longer backoff and more attempts on cloud.
     /// Returns the successful response and fully collected body (body is drained so connections can be reused).
     private func executeWithRetry(
         timeoutSeconds: Int,
@@ -171,8 +175,13 @@ public class OllamaClient {
         timeoutSeconds: Int,
         makeRequest: () throws -> HTTPClientRequest
     ) async throws -> (HTTPClientResponse, Data) {
+        let isCloud = Self.cloudConcurrencyLimit > 0
+        let ceiling = Self.maxRetryAttemptsCeiling
+        var effectiveMax = Self.maxRetryAttempts
+        if let ceiling { effectiveMax = min(effectiveMax, ceiling) }
         var lastError: Error?
-        for attempt in 1...Self.maxRetryAttempts {
+        var attempt = 1
+        while attempt <= effectiveMax {
             do {
                 let request = try makeRequest()
                 let response = try await httpClient.execute(
@@ -189,7 +198,19 @@ public class OllamaClient {
                     return (response, responseData)
                 }
 
-                if attempt >= Self.maxRetryAttempts {
+                let bodyText = String(data: responseData, encoding: .utf8) ?? ""
+                let isDNS = OllamaRetryPolicy.isDNSConnectivityHTTPFailure(
+                    statusCode: statusCode,
+                    bodyOrMessage: bodyText
+                )
+                if isDNS, ceiling == nil {
+                    effectiveMax = max(
+                        effectiveMax,
+                        OllamaRetryPolicy.maxAttempts(isCloud: isCloud, isDNSConnectivity: true)
+                    )
+                }
+
+                if attempt >= effectiveMax {
                     return (response, responseData)
                 }
 
@@ -198,19 +219,34 @@ public class OllamaClient {
                 let retryAfter = OllamaRetryPolicy.parseRetryAfterSeconds(retryAfterHeader)
                 let delay = OllamaRetryPolicy.backoffNanoseconds(
                     attempt: attempt,
-                    retryAfterSeconds: retryAfter
+                    retryAfterSeconds: retryAfter,
+                    isDNSConnectivity: isDNS && ceiling == nil
                 )
                 lastError = OllamaError.httpError(
                     statusCode: statusCode,
-                    message: " (retry \(attempt)/\(Self.maxRetryAttempts))"
+                    message: " (retry \(attempt)/\(effectiveMax))"
                 )
                 try await Task.sleep(nanoseconds: delay)
+                attempt += 1
                 continue
             } catch {
                 lastError = error
-                if attempt < Self.maxRetryAttempts, OllamaRetryPolicy.isTransientNetworkError(error) {
-                    let delay = OllamaRetryPolicy.backoffNanoseconds(attempt: attempt)
+                let isDNS = OllamaRetryPolicy.isDNSConnectivityFailure(
+                    String(describing: error) + " " + error.localizedDescription
+                )
+                if isDNS, ceiling == nil {
+                    effectiveMax = max(
+                        effectiveMax,
+                        OllamaRetryPolicy.maxAttempts(isCloud: isCloud, isDNSConnectivity: true)
+                    )
+                }
+                if attempt < effectiveMax, OllamaRetryPolicy.isTransientNetworkError(error) {
+                    let delay = OllamaRetryPolicy.backoffNanoseconds(
+                        attempt: attempt,
+                        isDNSConnectivity: isDNS && ceiling == nil
+                    )
                     try await Task.sleep(nanoseconds: delay)
+                    attempt += 1
                     continue
                 }
                 throw error
@@ -506,8 +542,11 @@ public class OllamaClient {
                 throw OllamaError.modelNotFound(model: model)
             }
             
-            // For other errors, include detailed debugging info
-            throw OllamaError.httpError(statusCode: statusCode, message: "\(errorMessage) (URL: \(apiURL), Model: \(model), Status: \(statusCode))")
+            // For other errors, include detailed debugging info (DNS tips added in OllamaError.description).
+            throw OllamaError.httpError(
+                statusCode: statusCode,
+                message: "\(errorMessage) (URL: \(apiURL), Model: \(model), Status: \(statusCode))"
+            )
         }
         
         guard !responseData.isEmpty else {
@@ -700,6 +739,77 @@ public class OllamaClient {
             throw OllamaError.modelNotFound(model: model)
         }
     }
+
+    /// Lightweight `/api/generate` probe for `:cloud` models before a heavy batch.
+    /// Surfaces DNS/connectivity failures to ollama.com with an actionable message.
+    /// Uses a small attempt budget so preflight fails fast when DNS is down.
+    /// - Throws: `OllamaError` when the upstream is unreachable or returns a hard failure.
+    public func probeCloudUpstreamConnectivity(timeoutSeconds: Int = 45) async throws {
+        guard CloudBatchPrescription.isCloudModel(model) else { return }
+
+        let apiURL = "\(baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/api/generate"
+        guard URL(string: apiURL) != nil else {
+            throw OllamaError.invalidURL
+        }
+
+        let body: [String: Any] = Self.ollamaGenerateRequestBody(
+            model: model,
+            prompt: "Reply with exactly: OK",
+            options: ["num_predict": 4, "temperature": 0]
+        )
+        let jsonData: Data
+        do {
+            jsonData = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            throw OllamaError.invalidResponse
+        }
+
+        // Fail fast on preflight — batch path still uses full DNS retry budget.
+        Self.clientLock.lock()
+        let savedCeiling = Self.maxRetryAttemptsCeiling
+        Self.maxRetryAttemptsCeiling = 2
+        Self.clientLock.unlock()
+        defer {
+            Self.clientLock.lock()
+            Self.maxRetryAttemptsCeiling = savedCeiling
+            Self.clientLock.unlock()
+        }
+
+        let response: HTTPClientResponse
+        let responseData: Data
+        do {
+            let jsonDataForRequest = jsonData
+            (response, responseData) = try await executeWithRetry(timeoutSeconds: timeoutSeconds) {
+                var request = HTTPClientRequest(url: apiURL)
+                request.method = .POST
+                request.headers.add(name: "Content-Type", value: "application/json")
+                request.headers.add(name: "Accept", value: "application/json")
+                request.headers.add(name: "Connection", value: "keep-alive")
+                request.body = .bytes(ByteBuffer(data: jsonDataForRequest))
+                return request
+            }
+        } catch {
+            let wrapped = OllamaError.networkError(error)
+            if OllamaRetryPolicy.isDNSConnectivityFailure(wrapped.description) {
+                throw OllamaError.httpError(
+                    statusCode: 502,
+                    message: ": dial tcp: lookup ollama.com failed (\(error.localizedDescription))"
+                )
+            }
+            throw wrapped
+        }
+
+        let statusCode = Int(response.status.code)
+        guard response.status == .ok else {
+            let preview = String(data: responseData, encoding: .utf8).map { String($0.prefix(300)) } ?? ""
+            var message = preview.isEmpty ? "" : ": \(preview)"
+            if let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+               let error = json["error"] as? String {
+                message = ": \(error)"
+            }
+            throw OllamaError.httpError(statusCode: statusCode, message: "\(message) (cloud preflight)")
+        }
+    }
     
     /// Generate keywords with definitions from subjects
     /// - Parameters:
@@ -845,6 +955,9 @@ public enum OllamaError: Error, CustomStringConvertible {
             var tip = ""
             if statusCode == 429 {
                 tip = " Rate limited — Yankovinator retries with backoff; lower --workers (cloud default ≤\(CloudBatchPrescription.cloudMaxConsumers)) if this persists."
+            } else if OllamaRetryPolicy.isDNSConnectivityHTTPFailure(statusCode: statusCode, bodyOrMessage: message)
+                        || OllamaRetryPolicy.isDNSConnectivityFailure(message) {
+                tip = OllamaRetryPolicy.dnsConnectivityUserTip
             } else if statusCode == 502 || statusCode == 503 || statusCode == 504 {
                 tip = " Upstream gateway error — retried with backoff; reduce concurrency if it keeps failing."
             }
@@ -873,7 +986,9 @@ public enum OllamaError: Error, CustomStringConvertible {
             
             // Add helpful suggestions based on error patterns
             var suggestions = ""
-            if errorString.lowercased().contains("timeout") || errorString.lowercased().contains("deadline") {
+            if OllamaRetryPolicy.isDNSConnectivityFailure(errorString + " " + localizedDesc) {
+                suggestions = OllamaRetryPolicy.dnsConnectivityUserTip
+            } else if errorString.lowercased().contains("timeout") || errorString.lowercased().contains("deadline") {
                 suggestions = " This may indicate Ollama is taking too long to respond. Try increasing the timeout or checking if Ollama is processing a large request."
             } else if errorString.lowercased().contains("can't assign requested address")
                         || errorString.lowercased().contains("cannot assign requested address") {
