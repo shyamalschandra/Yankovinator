@@ -94,7 +94,9 @@ public enum CandidateParodyGenerator {
         showProgress: Bool = false,
         ollamaURL: String = "http://localhost:11434",
         ollamaModel: String = "llama3.2:3b",
-        refinementPasses: Int = 2
+        refinementPasses: Int = 2,
+        lineCheckpoint: ParodyLineCheckpointStore? = nil,
+        checkpointJobID: String = "parody"
     ) async throws -> (best: ParodyCandidateResult, all: [ParodyCandidateResult]) {
         let count = clampCandidates(candidates)
         let indexes = Array(1...count)
@@ -113,7 +115,10 @@ public enum CandidateParodyGenerator {
                 originalLyrics: originalLyrics,
                 keywords: keywords,
                 refinementPasses: refinementPasses,
-                verbose: false
+                verbose: false,
+                lineCheckpoint: lineCheckpoint,
+                checkpointJobID: lineCheckpoint == nil ? nil : checkpointJobID,
+                checkpointCandidateIndex: index
             )
             let score = scoreParody(lines: lines, keywords: keywords, originalLyrics: originalLyrics)
             return ParodyCandidateResult(index: index, lines: lines, score: score)

@@ -21,7 +21,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
           # Outputs best: out/<theme>/<song>.parody.txt
           # Optional: --keep-candidates writes ranked variants
           # If songs×themes×candidates > 100, add --force
-          # Stop/restart: disk-paged checkpoints under --output-dir/.yankovinator (use --fresh-batch to reset)
+          # Stop/restart: finished songs and in-progress lines under --output-dir/.yankovinator (use --fresh-batch to reset)
         """,
         version: "1.06.14"
     )
@@ -387,8 +387,10 @@ struct YankovinatorCLI: AsyncParsableCommand {
             jobsFingerprint: jobsFingerprint
         )
         let resumeStore: BatchResumeStore
+        let lineCheckpoints: ParodyLineCheckpointStore
         do {
             resumeStore = try BatchResumeStore(outputRoot: outputRoot, manifest: resumeManifest, fresh: freshBatch)
+            lineCheckpoints = try ParodyLineCheckpointStore(outputRoot: outputRoot)
         } catch let error as BatchResumeError {
             throw ValidationError(error.description)
         } catch {
@@ -489,7 +491,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
             let batchHint =
                 "ℹ️  Batch: one `/api/generate` per lyric line; POS+OED prompts; global fit scoring" +
                 (fitOptimize ? "; --fit-optimize hill-climbs weak lines" : "") +
-                "; checkpoints under .yankovinator/ and .parody.txt as candidates finish."
+                "; each finished line is checkpointed under .yankovinator/lines/ so a stopped song resumes mid-lyric."
             if progressHandle != nil {
                 Task { await progressHandle?.postMessage(batchHint) }
             } else {
@@ -572,27 +574,59 @@ struct YankovinatorCLI: AsyncParsableCommand {
                     useUnsupervisedNLP: false,
                     skipLLMCoherenceCritic: skipLLMCoherence
                 )
-                let parodyLines = try await generator.generateParody(
-                    originalLyrics: lyrics,
-                    keywords: keywordsDict,
-                    progressCallback: { line, total in
-                        guard useTUIStatus, let ctx = WorkerJobContext.current else { return }
-                        Task {
-                            await progressHandle?.postWorkerLineProgress(
-                                workerID: ctx.workerID,
-                                line: line,
-                                total: total
-                            )
+                var parodyLines: [String]?
+                var jobAttempt = 0
+                while parodyLines == nil {
+                    jobAttempt += 1
+                    do {
+                        parodyLines = try await generator.generateParody(
+                            originalLyrics: lyrics,
+                            keywords: keywordsDict,
+                            progressCallback: { line, total in
+                                guard useTUIStatus, let ctx = WorkerJobContext.current else { return }
+                                Task {
+                                    await progressHandle?.postWorkerLineProgress(
+                                        workerID: ctx.workerID,
+                                        line: line,
+                                        total: total
+                                    )
+                                }
+                            },
+                            refinementPasses: batchRefinementPasses,
+                            enableCoherenceRegeneration: enableCoherenceRegeneration,
+                            optimizeFit: fitOptimize,
+                            fitTargetScore: ParodyFitScore.defaultCorrectnessThreshold,
+                            maxFitAttemptsPerLine: fitOptimize ? 2 : 0,
+                            fitPolishRounds: fitOptimize ? 1 : 0,
+                            verbose: verbose,
+                            lineCheckpoint: lineCheckpoints,
+                            checkpointJobID: item.job.id,
+                            checkpointCandidateIndex: item.candidateIndex
+                        )
+                    } catch let error as OllamaError {
+                        if case .modelNotFound = error { throw error }
+                        try Task.checkCancellation()
+                        let retry = "↻  [\(item.job.id)#c\(item.candidateIndex)] attempt \(jobAttempt) failed (\(error.description)); trying again from the last good line."
+                        if useTUIStatus {
+                            await progressHandle?.postMessage(retry)
+                        } else {
+                            fputs(retry + "\n", stderr)
                         }
-                    },
-                    refinementPasses: batchRefinementPasses,
-                    enableCoherenceRegeneration: enableCoherenceRegeneration,
-                    optimizeFit: fitOptimize,
-                    fitTargetScore: ParodyFitScore.defaultCorrectnessThreshold,
-                    maxFitAttemptsPerLine: fitOptimize ? 2 : 0,
-                    fitPolishRounds: fitOptimize ? 1 : 0,
-                    verbose: verbose
-                )
+                    } catch let error as ValidationError {
+                        throw error
+                    } catch {
+                        try Task.checkCancellation()
+                        let retry = "↻  [\(item.job.id)#c\(item.candidateIndex)] attempt \(jobAttempt) failed (\(error)); trying again from the last good line."
+                        if useTUIStatus {
+                            await progressHandle?.postMessage(retry)
+                        } else {
+                            fputs(retry + "\n", stderr)
+                        }
+                    }
+                }
+                guard let parodyLines else {
+                    throw ValidationError("Missing parody lines for \(item.job.id)")
+                }
                 let score = CandidateParodyGenerator.scoreParody(
                     lines: parodyLines,
                     keywords: keywordsDict,
@@ -602,6 +636,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
                 let result = ParodyCandidateResult(index: item.candidateIndex, lines: parodyLines, score: score)
 
                 try await resumeStore.record(job: item.job, result: result)
+                try await lineCheckpoints.remove(jobID: item.job.id, candidateIndex: item.candidateIndex)
 
                 if candidates > 1 {
                     try await checkpoint.consider(job: item.job, result: result) { message in

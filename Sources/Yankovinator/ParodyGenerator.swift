@@ -67,6 +67,9 @@ public class ParodyGenerator {
     ///   - fitTargetScore: Stop line optimization when composite fit reaches this value
     ///   - maxFitAttemptsPerLine: Max regenerate/refine attempts per line during fit optimization
     ///   - verbose: Whether to print verbose messages
+    ///   - lineCheckpoint: Optional per-line store. Completed lines are written as they finish so a later run can resume.
+    ///   - checkpointJobID: Key for `lineCheckpoint` (required when a store is provided)
+    ///   - checkpointCandidateIndex: Candidate slot under `checkpointJobID` (default 1)
     /// - Returns: Array of parody lines with preserved empty lines
     public func generateParody(
         originalLyrics: [String],
@@ -78,8 +81,55 @@ public class ParodyGenerator {
         fitTargetScore: Double = ParodyFitScore.defaultCorrectnessThreshold,
         maxFitAttemptsPerLine: Int = 4,
         fitPolishRounds: Int = 2,
-        verbose: Bool = false
+        verbose: Bool = false,
+        lineCheckpoint: ParodyLineCheckpointStore? = nil,
+        checkpointJobID: String? = nil,
+        checkpointCandidateIndex: Int = 1
     ) async throws -> [String] {
+        let checkpointFingerprint = ParodyLineCheckpointStore.fingerprint(
+            lyrics: originalLyrics,
+            keywords: keywords,
+            model: ollamaClient.policyModel,
+            refinementPasses: refinementPasses,
+            enableCoherenceRegeneration: enableCoherenceRegeneration,
+            optimizeFit: optimizeFit,
+            fitTargetScore: fitTargetScore,
+            maxFitAttemptsPerLine: maxFitAttemptsPerLine,
+            fitPolishRounds: fitPolishRounds
+        )
+        var restoredLines: [String] = []
+        if let lineCheckpoint, let checkpointJobID {
+            if let loaded = try await lineCheckpoint.load(
+                jobID: checkpointJobID,
+                candidateIndex: checkpointCandidateIndex,
+                fingerprint: checkpointFingerprint,
+                originalLyrics: originalLyrics
+            ) {
+                let kept = LineCogency.acceptablePrefix(lines: loaded.lines, originalLyrics: originalLyrics)
+                if loaded.finished && kept.count == originalLyrics.count {
+                    return kept
+                }
+                restoredLines = kept
+                if verbose && !restoredLines.isEmpty {
+                    Self.verbosePrint(
+                        "Resuming \(checkpointJobID) candidate \(checkpointCandidateIndex) at line \(restoredLines.count + 1)/\(originalLyrics.count)"
+                    )
+                }
+            }
+        }
+
+        func persistCheckpoint(_ lines: [String], finished: Bool) async throws {
+            guard let lineCheckpoint, let checkpointJobID else { return }
+            try await lineCheckpoint.save(
+                jobID: checkpointJobID,
+                candidateIndex: checkpointCandidateIndex,
+                fingerprint: checkpointFingerprint,
+                lineCount: originalLyrics.count,
+                lines: lines,
+                finished: finished
+            )
+        }
+
         // Verify model once per CLI run (batch workers share this flag).
         if !OllamaClient.isModelVerified(baseURL: ollamaClient.policyBaseURL, model: ollamaClient.policyModel) {
             try await verifyModel()
@@ -137,9 +187,24 @@ public class ParodyGenerator {
         
         // Generate each line, preserving empty lines
         for (index, originalLine) in originalLyrics.enumerated() {
+            if index < restoredLines.count {
+                let saved = restoredLines[index]
+                if emptyLineIndices.contains(index) {
+                    parodyLines.append("")
+                } else {
+                    parodyLines.append(saved)
+                    nonEmptyParodyLines.append(saved)
+                    usedWords.formUnion(extractWords(from: saved))
+                    nonEmptyIndex += 1
+                }
+                progressCallback?(index + 1, totalLines)
+                continue
+            }
+
             if emptyLineIndices.contains(index) {
                 // Preserve empty lines
                 parodyLines.append("")
+                try await persistCheckpoint(parodyLines, finished: false)
                 continue
             }
             
@@ -364,18 +429,31 @@ public class ParodyGenerator {
                 )
             }
 
+            parodyLine = try await settleCogentLine(
+                initial: parodyLine,
+                originalLine: originalLine,
+                syllableCount: syllableCount,
+                keywords: keywords,
+                contextLines: contextLines,
+                rhymeGroup: currentRhymeGroup,
+                rhymingLines: rhymingLines,
+                rhymeScheme: rhymeScheme,
+                wordSyllablePattern: wordSyllablePattern,
+                wordSyllables: wordSyllables.map { $0.syllables },
+                wordPartOfSpeechPattern: wordPartOfSpeechPattern,
+                usedWords: usedWords,
+                wordSuggestions: wordSuggestions,
+                lineNumber: index + 1,
+                verbose: verbose
+            )
+
             // Extract words from the generated line and add to usedWords set
             let wordsInLine = extractWords(from: parodyLine)
             usedWords.formUnion(wordsInLine)
-            
-            // Apply capitalization and punctuation matching from original line
-            parodyLine = applyCapitalizationAndPunctuation(
-                to: parodyLine,
-                from: originalLine
-            )
-            
+
             parodyLines.append(parodyLine)
             nonEmptyParodyLines.append(parodyLine) // Track for rhyming
+            try await persistCheckpoint(parodyLines, finished: false)
         }
 
         if optimizeFit {
@@ -403,6 +481,7 @@ public class ParodyGenerator {
             }
         }
 
+        try await persistCheckpoint(parodyLines, finished: true)
         return parodyLines
     }
     
@@ -544,10 +623,9 @@ public class ParodyGenerator {
             wordAvoidance = """
             
             WORD USAGE ENTROPY REQUIREMENT:
-            - DO NOT use any of these words that have already been used in previous lines: \(usedWordsList)
-            - Increase word entropy by using different, fresh vocabulary
-            - Only reuse words if they appear in the same line (repetition within a line is acceptable)
-            - Use synonyms, alternative phrasing, and varied word choices to avoid repetition
+            - Prefer not to repeat these words from earlier lines: \(usedWordsList)
+            - Reuse a word when the sentence needs it to stay grammatical
+            - Use a synonym only when the line still reads as a clear English clause
             """
         }
         
@@ -565,8 +643,8 @@ public class ParodyGenerator {
         3. Total syllables: \(syllableCount)
         4. Theme: \(keywordDescriptions) - STRONGLY EMBRACE and ADVANCE this theme in the line's meaning
         5. Rhyme group: \(rhymeGroup) in \(rhymeScheme) scheme\(rhymingInfo)
-        6. IN-LINE RHYMES: Include internal rhymes within the line, separated by commas. For example: "bright, light, night" or "dream, stream, seem". These comma-separated words should rhyme with each other and appear naturally in the line.
-        7. The line must make COGENT SENSE and have ARTISTIC STYLE that AMAZES
+        6. Write ONE grammatical English sentence or lyric clause. If the original has a verb, this line must have a verb. Keep commas only where they belong in the sentence. Put the same ending punctuation as the original at the end of the line.
+        7. The line must make COGENT SENSE as poetry: a readable clause, not a list of rhyming words, with artistic style
         8. PARODY COMEDY: witty, surprising, theme-aware humor—not nonsense; use unabridged-dictionary-defensible English
         9. Use vivid imagery, clever wordplay, and evocative language
         10. The line should flow naturally like professional song lyrics
@@ -637,10 +715,9 @@ public class ParodyGenerator {
             wordAvoidance = """
             
             WORD USAGE ENTROPY REQUIREMENT:
-            - DO NOT use any of these words that have already been used in previous lines: \(usedWordsList)
-            - Increase word entropy by using different, fresh vocabulary
-            - Only reuse words if they appear in the same line (repetition within a line is acceptable)
-            - Use synonyms, alternative phrasing, and varied word choices to avoid repetition
+            - Prefer not to repeat these words from earlier lines: \(usedWordsList)
+            - Reuse a word when the sentence needs it to stay grammatical
+            - Use a synonym only when the line still reads as a clear English clause
             """
         }
         
@@ -671,7 +748,7 @@ public class ParodyGenerator {
         8. Maintain artistic style with vivid imagery and clever wordplay
         9. Preserve rhyme requirements
         10. Use proper contractions when appropriate
-        11. IN-LINE RHYMES: Include internal rhymes within the line, separated by commas. For example: "bright, light, night" or "dream, stream, seem". These comma-separated words should rhyme with each other and appear naturally in the line.\(wordAvoidance)
+        11. Write ONE grammatical English sentence or lyric clause. Do not emit a comma-separated list of rhymes. Ending punctuation matches the original and sits at the end of the line.\(wordAvoidance)
         
         Generate a refined line that:
         - Maintains the exact syllable pattern
@@ -832,91 +909,103 @@ public class ParodyGenerator {
         }
     }
 
-    /// Apply capitalization and punctuation pattern from original line to generated line
+    /// Apply capitalization and punctuation so the line reads as one clause.
     private func applyCapitalizationAndPunctuation(to generatedLine: String, from originalLine: String) -> String {
-        NLConcurrency.synchronized {
-            applyCapitalizationAndPunctuationUnsafe(to: generatedLine, from: originalLine)
-        }
+        LineCogency.repair(generatedLine, matching: originalLine)
     }
 
-    private func applyCapitalizationAndPunctuationUnsafe(to generatedLine: String, from originalLine: String) -> String {
-        // Collect ranges first — nested enumerateTokens on the same NLTokenizer is unsafe.
-        let originalTokenizer = NLTokenizer(unit: .word)
-        originalTokenizer.string = originalLine
-        var originalRanges: [Range<String.Index>] = []
-        originalTokenizer.enumerateTokens(in: originalLine.startIndex..<originalLine.endIndex) { tokenRange, _ in
-            originalRanges.append(tokenRange)
-            return true
-        }
+    /// Keep sampling until the line is a grammatical sentence or lyric clause.
+    private func settleCogentLine(
+        initial: String,
+        originalLine: String,
+        syllableCount: Int,
+        keywords: [String: String],
+        contextLines: [String],
+        rhymeGroup: String,
+        rhymingLines: [String],
+        rhymeScheme: String,
+        wordSyllablePattern: String,
+        wordSyllables: [Int],
+        wordPartOfSpeechPattern: String,
+        usedWords: Set<String>,
+        wordSuggestions: [[(word: String, definition: String)]],
+        lineNumber: Int,
+        verbose: Bool
+    ) async throws -> String {
+        var current = initial
+        var lastReasons: [String] = []
+        var attempt = 0
+        let originalWordCount = PartOfSpeechAnalyzer.analyzeLine(originalLine).count
+        while true {
+            try Task.checkCancellation()
+            if attempt > 0 {
+                let keywordDescriptions = keywords.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+                let problems = lastReasons.joined(separator: "; ")
+                let context = contextLines.isEmpty
+                    ? ""
+                    : "\nPrevious lines:\n\(contextLines.joined(separator: "\n"))\n"
+                let prompt = """
+                Rewrite this parody line as ONE cogent English sentence or lyric clause.
+                Try \(attempt + 1). The previous draft failed because: \(problems)
+                Write a different line. Do not repeat the failed draft.
 
-        var originalWords: [(word: String, isCapitalized: Bool, afterWord: String)] = []
-        for (i, tokenRange) in originalRanges.enumerated() {
-            let word = String(originalLine[tokenRange])
-            let afterWordEnd = tokenRange.upperBound
-            let nextWordStart = (i + 1 < originalRanges.count) ? originalRanges[i + 1].lowerBound : originalLine.endIndex
-
-            var afterWord = ""
-            if nextWordStart > afterWordEnd {
-                afterWord = String(originalLine[afterWordEnd..<nextWordStart])
-            } else if afterWordEnd < originalLine.endIndex {
-                afterWord = String(originalLine[afterWordEnd...])
+                Original line: "\(originalLine)"
+                Failed draft: "\(current)"
+                Syllables: exactly \(syllableCount). Word syllable pattern: \(wordSyllablePattern)
+                Use \(originalWordCount) words, the same length as the original line.
+                Part of speech pattern: \(wordPartOfSpeechPattern)
+                Rhyme group \(rhymeGroup) in scheme \(rhymeScheme).
+                \(rhymingLines.isEmpty ? "" : "End rhyme must match: \(rhymingLines.joined(separator: " | "))")
+                Theme: \(keywordDescriptions)
+                \(context)
+                Rules:
+                - A grammatical clause a reader can understand. If the original has a verb, yours must have a verb. Include a noun or pronoun when the original has one.
+                - No comma-separated lists of rhyming words.
+                - Ending punctuation matches the original and sits at the end. No extra sentence breaks in the middle.
+                - Opening capitalization matches the original.
+                - The line must continue the meaning of the previous lines.
+                Return ONLY the rewritten line:
+                """
+                let temperature = min(1.15, 0.7 + Double(attempt % 8) * 0.06)
+                current = try await ollamaClient.generateParodyLine(
+                    originalLine: originalLine,
+                    syllableCount: syllableCount,
+                    keywords: keywords,
+                    previousLines: contextLines,
+                    customPrompt: prompt,
+                    rhymeGroup: rhymeGroup,
+                    rhymingLines: rhymingLines,
+                    rhymeScheme: rhymeScheme,
+                    wordSyllablePattern: wordSyllablePattern,
+                    wordSyllables: wordSyllables,
+                    wordPartOfSpeechPattern: wordPartOfSpeechPattern,
+                    usedWords: usedWords,
+                    wordSuggestions: wordSuggestions,
+                    temperature: temperature
+                )
             }
 
-            let firstChar = word.first { $0.isLetter }
-            let isCapitalized = firstChar?.isUppercase ?? false
-            originalWords.append((word: word, isCapitalized: isCapitalized, afterWord: afterWord))
-        }
-        
-        let generatedTokenizer = NLTokenizer(unit: .word)
-        generatedTokenizer.string = generatedLine
-        var generatedWords: [String] = []
-        generatedTokenizer.enumerateTokens(in: generatedLine.startIndex..<generatedLine.endIndex) { tokenRange, _ in
-            generatedWords.append(String(generatedLine[tokenRange]))
-            return true
-        }
-        
-        // Apply capitalization and punctuation pattern
-        var result = ""
-        let minCount = min(originalWords.count, generatedWords.count)
-        
-        for i in 0..<minCount {
-            var word = generatedWords[i]
-            
-            // Apply capitalization
-            if originalWords[i].isCapitalized {
-                // Capitalize first letter
-                if let firstLetterIndex = word.firstIndex(where: { $0.isLetter }) {
-                    let firstLetter = word[firstLetterIndex]
-                    let capitalized = String(firstLetter.uppercased())
-                    word.replaceSubrange(firstLetterIndex...firstLetterIndex, with: capitalized)
+            let repaired = LineCogency.repair(current, matching: originalLine)
+            let verdict = LineCogency.assess(
+                line: repaired,
+                original: originalLine,
+                previousLines: contextLines
+            )
+            if verdict.accepted {
+                if verbose && attempt > 0 {
+                    Self.verbosePrint("Cogency accepted line \(lineNumber) on attempt \(attempt + 1)")
                 }
-            } else {
-                // Lowercase first letter
-                if let firstLetterIndex = word.firstIndex(where: { $0.isLetter }) {
-                    let firstLetter = word[firstLetterIndex]
-                    let lowercased = String(firstLetter.lowercased())
-                    word.replaceSubrange(firstLetterIndex...firstLetterIndex, with: lowercased)
-                }
+                return repaired
             }
-            
-            result += word
-            result += originalWords[i].afterWord
-        }
-        
-        // If there are more generated words, add them with default spacing
-        if generatedWords.count > minCount {
-            for i in minCount..<generatedWords.count {
-                if i == minCount && result.last?.isWhitespace == false {
-                    result += " "
-                }
-                result += generatedWords[i]
-                if i < generatedWords.count - 1 {
-                    result += " "
-                }
+            lastReasons = verdict.reasons
+            current = repaired
+            if verbose {
+                Self.verbosePrint(
+                    "Cogency reject line \(lineNumber) attempt \(attempt + 1): \(verdict.reasons.joined(separator: "; ")) — trying again"
+                )
             }
+            attempt += 1
         }
-        
-        return result
     }
 
     private func optimizeLineForFit(
@@ -1089,6 +1178,11 @@ public class ParodyGenerator {
                 usedWords: []
             )
             let polished = applyCapitalizationAndPunctuation(to: refined, from: originalLine)
+            let cogent = LineCogency.assess(
+                line: polished,
+                original: originalLine,
+                previousLines: Array(contextLines)
+            )
             let after = ParodyFitScorer.scoreLine(
                 original: originalLine,
                 parody: polished,
@@ -1097,7 +1191,7 @@ public class ParodyGenerator {
                 dictionary: dictionary
             )
 
-            if after.composite > before.composite {
+            if cogent.accepted && after.composite > before.composite {
                 parodyLines[lineIndex] = polished
                 nonEmptyParodyLines[nonEmptyIndex] = polished
                 if verbose {

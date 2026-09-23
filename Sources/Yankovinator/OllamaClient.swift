@@ -291,7 +291,8 @@ public class OllamaClient {
         wordSyllables: [Int]? = nil,
         wordPartOfSpeechPattern: String? = nil,
         usedWords: Set<String> = [],
-        wordSuggestions: [[(word: String, definition: String)]] = []
+        wordSuggestions: [[(word: String, definition: String)]] = [],
+        temperature: Double = 0.8
     ) async throws -> String {
         let keywordDescriptions = keywords.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
         let context = previousLines.isEmpty ? "" : "Previous lines:\n\(previousLines.joined(separator: "\n"))\n\n"
@@ -347,12 +348,12 @@ public class OllamaClient {
         // Build in-line rhyme instructions
         let inlineRhymeInstructions = """
         
-        7. IN-LINE RHYMES (CRITICAL): Include internal rhymes within the line, separated by commas.
-           - Add comma-separated rhyming words that appear naturally in the line
-           - Examples: "bright, light, night" or "dream, stream, seem" or "flow, glow, show"
-           - These rhyming words should be integrated naturally into the line's meaning
-           - The comma-separated words should rhyme with each other
-           - This creates rich internal rhyme patterns within each verse
+        7. COGENT SENTENCE AND VERSE (the line is discarded if it fails):
+           - Write exactly one grammatical English sentence or one lyric clause a reader can understand.
+           - If the original line has a verb, your line must have a verb. Include the nouns, pronouns, and function words a sentence needs.
+           - Internal rhyme may occur inside that sentence. Never replace the sentence with a comma-separated list such as "bright, light, night".
+           - Ending punctuation must match the original and sit at the end of the line. Do not put a period or question mark in the middle.
+           - Opening capitalization must match the original line.
         """
         
         // Build word avoidance instructions
@@ -362,10 +363,9 @@ public class OllamaClient {
             wordAvoidanceInstructions = """
             
             8. WORD USAGE ENTROPY (CRITICAL): Increase vocabulary diversity by avoiding word repetition.
-               - DO NOT use any of these words that have already been used in previous lines: \(usedWordsList)
-               - Use synonyms, alternative phrasing, and varied word choices
-               - Only reuse words if they appear in the same line (repetition within a line is acceptable)
-               - This increases the entropy and richness of word usage across the poetry
+               - Prefer not to repeat these words from earlier lines: \(usedWordsList)
+               - Reuse a word when the sentence needs it to stay grammatical.
+               - Use synonyms only when they still make a clear English clause.
             """
         } else {
             wordAvoidanceInstructions = """
@@ -436,11 +436,11 @@ public class OllamaClient {
                - Use imagery, metaphors, and concepts related to the theme
                - Make the theme central to the line's semantic content, not just mentioned
             3. Maintains the rhythm and style of the original: "\(originalLine)"
-            4. Preserves punctuation style similar to the original
+            4. Uses the original's punctuation, with the ending mark at the end of the line
             5. Is creative, humorous, and appropriate\(rhymingInstructions)\(inlineRhymeInstructions)\(wordAvoidanceInstructions)\(dictionarySuggestions)\(partOfSpeechInstructions)\(comedyAndOEDInstructions)
             
             CRITICAL QUALITY REQUIREMENTS:
-            - The line must make COGENT SENSE - it must be grammatically correct and semantically meaningful
+            - The line must be a cogent sentence or lyric clause: grammatically correct, punctuated, and meaningful as poetry
             - The line must have ARTISTIC STYLE that AMAZES - use vivid imagery, clever wordplay, poetic devices, and evocative language
             - Each word substitution should be thoughtful and enhance the artistic quality
             - The line should flow naturally and sound like it belongs in a professional song
@@ -464,7 +464,7 @@ public class OllamaClient {
         
         // Add options - Ollama API format
         let options: [String: Any] = [
-            "temperature": 0.8,
+            "temperature": temperature,
             "top_p": 0.9,
             "num_predict": 100
         ]

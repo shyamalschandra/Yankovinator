@@ -15,20 +15,32 @@ public struct Yankovinator {
     ///   - ollamaURL: Optional Ollama API base URL (default: http://localhost:11434)
     ///   - ollamaModel: Optional Ollama model name (default: llama3.2:3b)
     ///   - useUnsupervisedNLP: Enable embedding substitution, rhyme clustering, coherence critic
+    ///   - lineCheckpoint: Optional per-line store so an interrupted song resumes at the next line
+    ///   - checkpointJobID: Key for `lineCheckpoint`
+    ///   - checkpointCandidateIndex: Candidate slot under `checkpointJobID`
     /// - Returns: Array of parody lines matching syllable structure
     public static func generateParody(
         originalLyrics: [String],
         keywords: [String: String],
         ollamaURL: String = "http://localhost:11434",
         ollamaModel: String = "llama3.2:3b",
-        useUnsupervisedNLP: Bool = true
+        useUnsupervisedNLP: Bool = true,
+        lineCheckpoint: ParodyLineCheckpointStore? = nil,
+        checkpointJobID: String? = nil,
+        checkpointCandidateIndex: Int = 1
     ) async throws -> [String] {
         let generator = ParodyGenerator(
             ollamaBaseURL: ollamaURL,
             ollamaModel: ollamaModel,
             useUnsupervisedNLP: useUnsupervisedNLP
         )
-        return try await generator.generateParody(originalLyrics: originalLyrics, keywords: keywords)
+        return try await generator.generateParody(
+            originalLyrics: originalLyrics,
+            keywords: keywords,
+            lineCheckpoint: lineCheckpoint,
+            checkpointJobID: checkpointJobID,
+            checkpointCandidateIndex: checkpointCandidateIndex
+        )
     }
     
     /// Count syllables in text using NaturalLanguage
