@@ -23,7 +23,7 @@ struct YankovinatorCLI: AsyncParsableCommand {
           # If songs×themes×candidates > 100, add --force
           # Stop/restart: finished songs and in-progress lines under --output-dir/.yankovinator (use --fresh-batch to reset)
         """,
-        version: "1.06.14"
+        version: "1.06.15"
     )
 
     @Option(name: [.long, .customShort("u")], help: "Ollama API base URL (local or cloud)")

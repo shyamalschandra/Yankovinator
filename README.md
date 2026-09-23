@@ -49,11 +49,11 @@ The **`yankovinator` CLI (v1.06.0+)** runs in **batch mode only**: put songs in 
 
 ### Pre-built binaries (recommended)
 
-Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.14**). No Swift toolchain required.
+Download from [GitHub Releases](https://github.com/shyamalschandra/Yankovinator/releases) (current: **v1.06.15**). No Swift toolchain required.
 
 ```bash
 curl -L -o yankovinator-universal.tar.gz \
-  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.14/yankovinator-universal.tar.gz
+  https://github.com/shyamalschandra/Yankovinator/releases/download/v1.06.15/yankovinator-universal.tar.gz
 
 tar -xzf yankovinator-universal.tar.gz
 sudo mv yankovinator yankovinator-tui keyword-generator /usr/local/bin/
@@ -72,7 +72,7 @@ See [docs/RELEASES.md](docs/RELEASES.md) for architecture-specific downloads and
 brew tap shyamalschandra/yankovinator
 brew install yankovinator
 
-yankovinator --version          # → 1.06.14+
+yankovinator --version          # → 1.06.15+
 yankovinator --help
 keyword-generator --help
 ```
@@ -355,7 +355,8 @@ See [docs/CERTIFICATION.md](docs/CERTIFICATION.md). Latest run summary: [docs/ce
 | Resource | Description |
 |---|---|
 | [QUICK_START.md](QUICK_START.md) | Fast path from clone to first parody |
-| [RELEASE_NOTES_v1.06.14.md](RELEASE_NOTES_v1.06.14.md) | Latest (cloud DNS resilience + batch isolation) |
+| [RELEASE_NOTES_v1.06.15.md](RELEASE_NOTES_v1.06.15.md) | Latest (cogent verse gate + per-line resume) |
+| [RELEASE_NOTES_v1.06.14.md](RELEASE_NOTES_v1.06.14.md) | Cloud DNS resilience + batch isolation |
 | [RELEASE_NOTES_v1.06.13.md](RELEASE_NOTES_v1.06.13.md) | License max 10 concurrent consumers |
 | [RELEASE_NOTES_v1.06.12.md](RELEASE_NOTES_v1.06.12.md) | Disk-paged batch checkpoints |
 | [RELEASE_NOTES_v1.06.10.md](RELEASE_NOTES_v1.06.10.md) | Per-worker elapsed/remain on progress bars |
